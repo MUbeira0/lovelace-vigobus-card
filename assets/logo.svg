@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="320" viewBox="0 0 960 320" role="img" aria-labelledby="title desc">
+  <title id="title">VigoBus Card</title>
+  <desc id="desc">Dashboard card for Home Assistant and VigoBus</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#082f49"/>
+      <stop offset="100%" stop-color="#0f766e"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" x2="1">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="100%" stop-color="#34d399"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="320" rx="28" fill="url(#bg)"/>
+  <rect x="44" y="48" width="230" height="224" rx="24" fill="rgba(255,255,255,0.10)" stroke="rgba(255,255,255,0.16)"/>
+  <rect x="62" y="68" width="194" height="12" rx="6" fill="#60a5fa"/>
+  <rect x="62" y="100" width="110" height="20" rx="8" fill="#ffffff" opacity="0.95"/>
+  <rect x="62" y="132" width="160" height="12" rx="6" fill="#dbeafe" opacity="0.9"/>
+  <rect x="62" y="168" width="194" height="38" rx="12" fill="rgba(255,255,255,0.10)" stroke="rgba(255,255,255,0.12)"/>
+  <rect x="62" y="218" width="194" height="38" rx="12" fill="rgba(255,255,255,0.10)" stroke="rgba(255,255,255,0.12)"/>
+  <text x="310" y="118" fill="#ffffff" font-size="54" font-family="Segoe UI, Arial, sans-serif" font-weight="700">VigoBus Card</text>
+  <text x="310" y="168" fill="#dbeafe" font-size="26" font-family="Segoe UI, Arial, sans-serif">Tarjeta Dashboard para Home Assistant</text>
+  <text x="310" y="210" fill="#a7f3d0" font-size="22" font-family="Segoe UI, Arial, sans-serif">Diseño hero · Alertas · Variantes de ruta · Varias paradas</text>
+  <rect x="310" y="240" width="310" height="10" rx="5" fill="url(#accent)"/>
+</svg>

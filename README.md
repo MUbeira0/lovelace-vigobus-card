@@ -1,12 +1,14 @@
 # VigoBus Card
 
-Dashboard card for Home Assistant that displays VigoBus arrival times, routes, alerts, and multiple configured stops.
+![VigoBus Card](assets/logo.svg)
 
+Dashboard card for Home Assistant that displays Vigo urban bus arrival times, routes, alerts, and multiple configured stops.
 ## Features
 
 - Main stop hero layout
 - Secondary stops with matching style
 - Route-aware upcoming buses
+- Multiple route variants shown per line when available
 - Alerts per active line
 - Spanish, English, and Galician UI
 - Compact mode and card editor
