@@ -848,6 +848,10 @@ class VigoBusCard extends HTMLElement {
           align-items: flex-start;
         }
 
+        .hero-top > div {
+          min-width: 0;
+        }
+
         .stop-name {
           font-size: 17px;
           font-weight: 800;
@@ -897,8 +901,8 @@ class VigoBusCard extends HTMLElement {
         }
 
         .next-item {
-          display: flex;
-          justify-content: space-between;
+          display: grid;
+          grid-template-columns: auto auto minmax(0, 1fr);
           align-items: center;
           gap: 10px;
           padding: 8px 10px;
@@ -911,6 +915,31 @@ class VigoBusCard extends HTMLElement {
 
         .next-item strong {
           font-weight: 800;
+        }
+
+        .next-route {
+          color: var(--vigobus-muted);
+          min-width: 0;
+          text-align: right;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .alert-item {
+          grid-template-columns: auto minmax(0, 1fr) auto;
+        }
+
+        .alert-title {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .alert-lines {
+          color: var(--vigobus-muted);
+          white-space: nowrap;
         }
 
         .section {
@@ -1047,12 +1076,76 @@ class VigoBusCard extends HTMLElement {
         }
 
         @media (max-width: 600px) {
+          .header {
+            padding: 14px 14px 8px;
+          }
+
+          .title h3 {
+            font-size: 18px;
+          }
+
+          .section {
+            padding: 0 14px 14px;
+          }
+
+          .hero {
+            margin: 0 14px 12px;
+            padding: 12px;
+            border-radius: 14px;
+          }
+
           .hero-top {
             flex-direction: column;
+            gap: 8px;
           }
 
           .main-time {
             text-align: left;
+            font-size: 30px;
+          }
+
+          .meta {
+            font-size: 12px;
+            line-height: 1.45;
+          }
+
+          .pill-row {
+            margin-top: 10px;
+            gap: 8px;
+          }
+
+          .pill {
+            font-size: 11px;
+            padding: 6px 9px;
+          }
+
+          .next-item {
+            grid-template-columns: auto minmax(0, 1fr);
+            row-gap: 4px;
+            align-items: start;
+          }
+
+          .next-route {
+            grid-column: 1 / -1;
+            text-align: left;
+            white-space: normal;
+            overflow-wrap: anywhere;
+          }
+
+          .alert-item {
+            grid-template-columns: auto minmax(0, 1fr);
+          }
+
+          .alert-title {
+            white-space: normal;
+            overflow-wrap: anywhere;
+          }
+
+          .alert-lines {
+            grid-column: 1 / -1;
+            white-space: normal;
+            overflow-wrap: anywhere;
+            font-size: 11px;
           }
         }
       </style>
@@ -1093,7 +1186,7 @@ class VigoBusCard extends HTMLElement {
                   <div class="next-item">
                     <strong>${escapeHtml(bus.line)}</strong>
                     <span>${escapeHtml(formatShortDuration(bus.minutes))}</span>
-                    <span style="color: var(--vigobus-muted); flex: 1; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(bus.route)}</span>
+                    <span class="next-route">${escapeHtml(bus.route)}</span>
                   </div>
                 `).join("")}
               </div>
@@ -1102,10 +1195,10 @@ class VigoBusCard extends HTMLElement {
             ${this._config.show_alerts ? `<div class="next-list">
               <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 4px;">${escapeHtml(t(locale, "alerts"))}</div>
               ${visibleAlerts.length ? visibleAlerts.map((alert) => `
-                <div class="next-item">
+                <div class="next-item alert-item">
                   <strong>!</strong>
-                  <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(alert?.title || "-")}</span>
-                  <span style="color: var(--vigobus-muted);">${escapeHtml(alert?.lineas || "")}</span>
+                  <span class="alert-title">${escapeHtml(alert?.title || "-")}</span>
+                  <span class="alert-lines">${escapeHtml(alert?.lineas || "")}</span>
                 </div>
               `).join("") : `<div style="color: var(--vigobus-muted); font-size: 12px;">${escapeHtml(t(locale, "no_alerts"))}</div>`}
             </div>` : ""}
@@ -1154,7 +1247,7 @@ class VigoBusCard extends HTMLElement {
                           <div class="next-item">
                             <strong>${escapeHtml(item.line)}</strong>
                             <span>${escapeHtml(formatShortDuration(item.minutes))}</span>
-                            <span style="color: var(--vigobus-muted); flex: 1; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(item.route || "-")}</span>
+                            <span class="next-route">${escapeHtml(item.route || "-")}</span>
                           </div>
                         `).join("")}
                       </div>
@@ -1165,10 +1258,10 @@ class VigoBusCard extends HTMLElement {
                         ? `<div class="next-list secondary-alerts">
                             <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 2px;">${escapeHtml(t(locale, "alerts"))}</div>
                             ${filteredAlerts.map((item) => `
-                              <div class="next-item">
+                              <div class="next-item alert-item">
                                 <strong>!</strong>
-                                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(item?.title || "-")}</span>
-                                <span style="color: var(--vigobus-muted);">${escapeHtml(item?.lineas || "")}</span>
+                                <span class="alert-title">${escapeHtml(item?.title || "-")}</span>
+                                <span class="alert-lines">${escapeHtml(item?.lineas || "")}</span>
                               </div>
                             `).join("")}
                           </div>`
