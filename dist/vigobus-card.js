@@ -381,7 +381,7 @@ function getNextBuses(group, count) {
 
   return buses.slice(0, limit).map((bus) => ({
     line: bus?.linea || "-",
-    route: bus?.ruta || "-",
+    route: formatRouteWithLine(bus?.linea, bus?.ruta),
     minutes: bus?.minutos,
   }));
 }
@@ -478,6 +478,26 @@ function getRoutesFromGroup(group) {
   appendRoute(group?.ruta?.state);
 
   return routes.length ? routes : ["-"];
+}
+
+function formatRouteWithLine(line, route) {
+  const normalizedLine = String(line || "").trim();
+  const normalizedRoute = String(route || "").trim();
+
+  if (!normalizedRoute || normalizedRoute === "-") {
+    return normalizedLine || "-";
+  }
+
+  if (!normalizedLine || normalizedLine === "-") {
+    return normalizedRoute;
+  }
+
+  const prefix = `${normalizedLine.toUpperCase()} - `;
+  if (normalizedRoute.toUpperCase().startsWith(prefix)) {
+    return normalizedRoute;
+  }
+
+  return `${normalizedLine} - ${normalizedRoute}`;
 }
 
 function getDistanceFromGroup(group) {
@@ -732,7 +752,7 @@ class VigoBusCard extends HTMLElement {
     const mainMinutes = getMinutesFromEntity(primaryGroup?.entity);
     const mainLine = getLineFromGroup(primaryGroup);
     const mainRoutes = getRoutesFromGroup(primaryGroup);
-    const mainRoute = mainRoutes.join(" | ");
+    const mainRoute = mainRoutes.map((route) => formatRouteWithLine(mainLine, route)).join(" | ");
     const mainRouteLabel = mainRoutes.length > 1 ? t(locale, "routes") : t(locale, "route");
     const mainDistance = getDistanceFromGroup(primaryGroup);
     const updatedAt = getUpdatedAtFromGroup(primaryGroup);
@@ -1215,7 +1235,7 @@ class VigoBusCard extends HTMLElement {
                 const minutes = getMinutesFromEntity(group.entity);
                 const line = getLineFromGroup(group);
                 const routes = getRoutesFromGroup(group);
-                const route = routes.join(" | ");
+                const route = routes.map((item) => formatRouteWithLine(line, item)).join(" | ");
                 const routeLabel = routes.length > 1 ? t(locale, "routes") : t(locale, "route");
                 const nextStops = getNextBuses(group, nextBusCount);
                 const groupAlerts = getAlertsFromGroup(group);
