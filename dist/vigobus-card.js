@@ -480,6 +480,42 @@ function getRoutesFromGroup(group) {
   return routes.length ? routes : ["-"];
 }
 
+function getRouteEntriesFromGroup(group) {
+  const entries = [];
+  const seen = new Set();
+
+  const appendEntry = (line, route) => {
+    const normalizedLine = String(line || "").trim();
+    const normalizedRoute = String(route || "").trim();
+    if (!normalizedRoute || normalizedRoute === "-") {
+      return;
+    }
+
+    const key = `${normalizedLine.toUpperCase()}|${normalizedRoute.toUpperCase()}`;
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    entries.push({ line: normalizedLine, route: normalizedRoute });
+  };
+
+  const buses = getBusesFromGroup(group);
+  if (buses.length) {
+    for (const bus of buses) {
+      appendEntry(bus?.linea, bus?.ruta);
+    }
+    return entries.length ? entries : [{ line: getLineFromGroup(group), route: getRouteFromGroup(group) }];
+  }
+
+  const fallbackLine = getLineFromGroup(group);
+  for (const route of getRoutesFromGroup(group)) {
+    appendEntry(fallbackLine, route);
+  }
+
+  return entries.length ? entries : [{ line: fallbackLine, route: getRouteFromGroup(group) }];
+}
+
 function formatRouteWithLine(line, route) {
   const normalizedLine = String(line || "").trim();
   const normalizedRoute = String(route || "").trim();
@@ -492,12 +528,15 @@ function formatRouteWithLine(line, route) {
     return normalizedRoute;
   }
 
-  const prefix = `${normalizedLine.toUpperCase()} - `;
-  if (normalizedRoute.toUpperCase().startsWith(prefix)) {
-    return normalizedRoute;
+  const linePattern = normalizedLine.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const prefixPattern = new RegExp(`^${linePattern}\s*[-–—:]\s*`, "i");
+  const strippedRoute = normalizedRoute.replace(prefixPattern, "").trim();
+
+  if (!strippedRoute) {
+    return normalizedLine;
   }
 
-  return `${normalizedLine} - ${normalizedRoute}`;
+  return `${normalizedLine} - ${strippedRoute}`;
 }
 
 function getDistanceFromGroup(group) {
@@ -751,9 +790,9 @@ class VigoBusCard extends HTMLElement {
     const compact = Boolean(this._config.compact);
     const mainMinutes = getMinutesFromEntity(primaryGroup?.entity);
     const mainLine = getLineFromGroup(primaryGroup);
-    const mainRoutes = getRoutesFromGroup(primaryGroup);
-    const mainRoute = mainRoutes.map((route) => formatRouteWithLine(mainLine, route)).join(" | ");
-    const mainRouteLabel = mainRoutes.length > 1 ? t(locale, "routes") : t(locale, "route");
+    const mainRouteEntries = getRouteEntriesFromGroup(primaryGroup);
+    const mainRoute = mainRouteEntries.map((item) => formatRouteWithLine(item.line || mainLine, item.route)).join(" | ");
+    const mainRouteLabel = mainRouteEntries.length > 1 ? t(locale, "routes") : t(locale, "route");
     const mainDistance = getDistanceFromGroup(primaryGroup);
     const updatedAt = getUpdatedAtFromGroup(primaryGroup);
     const maxStops = Math.max(1, Number(this._config.max_stops) || 6);
@@ -1234,9 +1273,9 @@ class VigoBusCard extends HTMLElement {
               ${visibleSecondary.map((group) => {
                 const minutes = getMinutesFromEntity(group.entity);
                 const line = getLineFromGroup(group);
-                const routes = getRoutesFromGroup(group);
-                const route = routes.map((item) => formatRouteWithLine(line, item)).join(" | ");
-                const routeLabel = routes.length > 1 ? t(locale, "routes") : t(locale, "route");
+                const routeEntries = getRouteEntriesFromGroup(group);
+                const route = routeEntries.map((item) => formatRouteWithLine(item.line || line, item.route)).join(" | ");
+                const routeLabel = routeEntries.length > 1 ? t(locale, "routes") : t(locale, "route");
                 const nextStops = getNextBuses(group, nextBusCount);
                 const groupAlerts = getAlertsFromGroup(group);
                 const filteredAlerts = filterAlerts(
