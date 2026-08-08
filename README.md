@@ -41,6 +41,33 @@ If HACS does not add the resource automatically, add:
 - `show_all_stops`: Show main stop plus extra configured stops
 - `compact`: Use compact mode for tighter dashboards
 
+## "My location" mode (per-viewer nearest stop)
+
+Every entity-based stop on this card (including the `nearest` one) reflects
+a single shared Home Assistant state, the same for anyone looking at the
+dashboard. Set `device_location_mode: true` to add an extra section that
+instead asks **each viewing device's own browser/app** for its live GPS
+location and shows the stop(s) closest to *that* device — a phone and a
+tablet looking at the same dashboard can see different stops. It requires
+the `vigobus-integration` backend (v2.1.0+) for the stateless
+`vigobus.nearest_stops` service, and the browser/app must grant the page
+location permission.
+
+```yaml
+type: custom:vigobus-card
+title: VigoBus
+device_location_mode: true
+device_location_title: "" # optional, defaults to a translated label
+device_location_tie_margin_m: 60 # also show stops within this many meters of the closest one
+device_location_max_candidates: 3
+device_location_refresh_seconds: 45
+```
+
+When more than one stop is within `device_location_tie_margin_m` of the
+closest one, the section shows a row of chips so the viewer can pick which
+one to see — useful when the nearest stop alone is ambiguous (e.g. stops on
+opposite sidewalks).
+
 ## Troubleshooting
 
 - If the card does not render, verify the resource is loaded and refresh the dashboard cache.

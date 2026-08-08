@@ -48,6 +48,18 @@ const TEXTS = {
     show_alerts: "Mostrar alertas",
     alerts_only_main_line: "Solo l\u00ednea principal",
     alerts_max: "Max avisos",
+    my_location: "Mi ubicaci\u00f3n",
+    locating: "Buscando tu ubicaci\u00f3n\u2026",
+    loading_stops: "Consultando paradas cercanas\u2026",
+    location_permission_denied: "Activa el permiso de ubicaci\u00f3n para ver tu parada m\u00e1s cercana.",
+    location_unavailable: "No se pudo obtener tu ubicaci\u00f3n. Int\u00e9ntalo de nuevo.",
+    location_unsupported: "Este dispositivo no soporta geolocalizaci\u00f3n.",
+    no_nearby_stops: "No se encontraron paradas cerca de ti.",
+    device_location_enable: "Activar (usa la ubicaci\u00f3n del dispositivo)",
+    device_location_margin: "Margen de empate (metros)",
+    device_location_max_candidates: "M\u00e1x. paradas candidatas",
+    device_location_refresh: "Refresco (segundos)",
+    device_location_hint: "Cada dispositivo que vea esta tarjeta consultar\u00e1 su propia ubicaci\u00f3n; no depende de ninguna entidad.",
   },
   en: {
     unknown: "Unknown",
@@ -94,6 +106,18 @@ const TEXTS = {
     show_alerts: "Show alerts",
     alerts_only_main_line: "Only main line",
     alerts_max: "Max alerts",
+    my_location: "My location",
+    locating: "Finding your location…",
+    loading_stops: "Looking up nearby stops…",
+    location_permission_denied: "Enable location permission to see your nearest stop.",
+    location_unavailable: "Could not get your location. Please try again.",
+    location_unsupported: "This device does not support geolocation.",
+    no_nearby_stops: "No stops found near you.",
+    device_location_enable: "Enable (uses the viewing device's location)",
+    device_location_margin: "Tie margin (meters)",
+    device_location_max_candidates: "Max candidate stops",
+    device_location_refresh: "Refresh (seconds)",
+    device_location_hint: "Every device viewing this card looks up its own location; it does not depend on any entity.",
   },
   gl: {
     unknown: "Desco\u00f1ecido",
@@ -140,6 +164,18 @@ const TEXTS = {
     show_alerts: "Amosar alertas",
     alerts_only_main_line: "S\u00f3 li\u00f1a principal",
     alerts_max: "Max avisos",
+    my_location: "A mi\u00f1a ubicaci\u00f3n",
+    locating: "Buscando a t\u00faa ubicaci\u00f3n\u2026",
+    loading_stops: "Consultando paradas pr\u00f3ximas\u2026",
+    location_permission_denied: "Activa o permiso de ubicaci\u00f3n para ver a t\u00faa parada m\u00e1is pr\u00f3xima.",
+    location_unavailable: "Non se puido obter a t\u00faa ubicaci\u00f3n. T\u00e9ntao de novo.",
+    location_unsupported: "Este dispositivo non soporta xeolocalizaci\u00f3n.",
+    no_nearby_stops: "Non se atoparon paradas preto de ti.",
+    device_location_enable: "Activar (usa a ubicaci\u00f3n do dispositivo)",
+    device_location_margin: "Marxe de empate (metros)",
+    device_location_max_candidates: "M\u00e1x. paradas candidatas",
+    device_location_refresh: "Actualizaci\u00f3n (segundos)",
+    device_location_hint: "Cada dispositivo que vexa esta tarxeta consultar\u00e1 a s\u00faa propia ubicaci\u00f3n; non depende de ningunha entidade.",
   },
 };
 
@@ -627,6 +663,11 @@ class VigoBusCard extends HTMLElement {
       alerts_max: 3,
       accent_color: "#2a7fff",
       language: "auto",
+      device_location_mode: false,
+      device_location_title: "",
+      device_location_tie_margin_m: 60,
+      device_location_max_candidates: 3,
+      device_location_refresh_seconds: 45,
       stop1_entity: "sensor.vigobus_nearest",
       stop1_title: "",
       stop2_entity: "",
@@ -749,8 +790,15 @@ class VigoBusCard extends HTMLElement {
       alerts_max: 3,
       accent_color: "#2a7fff",
       language: "auto",
+      device_location_mode: false,
+      device_location_title: "",
+      device_location_tie_margin_m: 60,
+      device_location_max_candidates: 3,
+      device_location_refresh_seconds: 45,
       stops: [],
     };
+    this._deviceLocationState = null;
+    this._deviceLocationTimer = null;
     this.attachShadow({ mode: "open" });
   }
 
@@ -765,8 +813,19 @@ class VigoBusCard extends HTMLElement {
       max_stops: Number(config.max_stops ?? this._config.max_stops ?? 6),
       next_buses_count: Number(config.next_buses_count ?? this._config.next_buses_count ?? 3),
       alerts_max: Number(config.alerts_max ?? this._config.alerts_max ?? 3),
+      device_location_mode: Boolean(config.device_location_mode ?? this._config.device_location_mode ?? false),
+      device_location_tie_margin_m: Number(
+        config.device_location_tie_margin_m ?? this._config.device_location_tie_margin_m ?? 60
+      ),
+      device_location_max_candidates: Number(
+        config.device_location_max_candidates ?? this._config.device_location_max_candidates ?? 3
+      ),
+      device_location_refresh_seconds: Number(
+        config.device_location_refresh_seconds ?? this._config.device_location_refresh_seconds ?? 45
+      ),
       stops: normalizeConfiguredStops(config),
     };
+    this._syncDeviceLocationLoop();
     this._render();
   }
 
@@ -777,6 +836,207 @@ class VigoBusCard extends HTMLElement {
 
   getCardSize() {
     return this._config.compact ? 3 : 6;
+  }
+
+  connectedCallback() {
+    this._syncDeviceLocationLoop();
+  }
+
+  disconnectedCallback() {
+    this._stopDeviceLocationLoop();
+  }
+
+  _syncDeviceLocationLoop() {
+    if (!this._config?.device_location_mode || !this.isConnected) {
+      this._stopDeviceLocationLoop();
+      return;
+    }
+
+    if (this._deviceLocationTimer) {
+      return;
+    }
+
+    this._refreshDeviceLocation();
+    const seconds = Math.max(15, Number(this._config.device_location_refresh_seconds) || 45);
+    this._deviceLocationTimer = setInterval(() => this._refreshDeviceLocation(), seconds * 1000);
+  }
+
+  _stopDeviceLocationLoop() {
+    if (this._deviceLocationTimer) {
+      clearInterval(this._deviceLocationTimer);
+      this._deviceLocationTimer = null;
+    }
+  }
+
+  _refreshDeviceLocation() {
+    if (!navigator.geolocation) {
+      this._deviceLocationState = {
+        status: "error",
+        error: "no_geolocation",
+        candidates: [],
+        selectedId: null,
+        updatedAt: null,
+      };
+      this._render();
+      return;
+    }
+
+    this._deviceLocationState = {
+      status: "locating",
+      error: null,
+      candidates: this._deviceLocationState?.candidates || [],
+      selectedId: this._deviceLocationState?.selectedId ?? null,
+      updatedAt: this._deviceLocationState?.updatedAt ?? null,
+    };
+    this._render();
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        try {
+          this._deviceLocationState = { ...this._deviceLocationState, status: "loading" };
+          this._render();
+
+          if (!this._hass?.connection) {
+            throw new Error("no_connection");
+          }
+
+          const result = await this._hass.connection.sendMessagePromise({
+            type: "call_service",
+            domain: "vigobus",
+            service: "nearest_stops",
+            service_data: {
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+              tie_margin_m: Number(this._config.device_location_tie_margin_m) || 60,
+              max_candidates: Number(this._config.device_location_max_candidates) || 3,
+            },
+            return_response: true,
+          });
+
+          const candidates = Array.isArray(result?.response?.candidates)
+            ? result.response.candidates
+            : [];
+          const previousSelected = this._deviceLocationState?.selectedId;
+          const stillValid = candidates.some((candidate) => candidate.id === previousSelected);
+
+          this._deviceLocationState = {
+            status: candidates.length ? "ready" : "empty",
+            error: null,
+            candidates,
+            selectedId: stillValid ? previousSelected : candidates[0]?.id ?? null,
+            updatedAt: new Date().toISOString(),
+          };
+        } catch (err) {
+          this._deviceLocationState = {
+            ...this._deviceLocationState,
+            status: "error",
+            error: "service_error",
+          };
+        }
+        this._render();
+      },
+      (geoError) => {
+        this._deviceLocationState = {
+          ...this._deviceLocationState,
+          status: "error",
+          error: geoError?.code === 1 ? "permission_denied" : "position_unavailable",
+        };
+        this._render();
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 20000 }
+    );
+  }
+
+  _selectDeviceCandidate(stopId) {
+    if (!this._deviceLocationState) {
+      return;
+    }
+    this._deviceLocationState = { ...this._deviceLocationState, selectedId: stopId };
+    this._render();
+  }
+
+  _renderDeviceLocationSection(locale) {
+    const state = this._deviceLocationState || { status: "locating", candidates: [], selectedId: null };
+    const title = String(this._config.device_location_title || "").trim() || t(locale, "my_location");
+
+    let body;
+    if (state.status === "error") {
+      const key =
+        state.error === "permission_denied"
+          ? "location_permission_denied"
+          : state.error === "no_geolocation"
+          ? "location_unsupported"
+          : "location_unavailable";
+      body = `<div class="meta">${escapeHtml(t(locale, key))}</div>`;
+    } else if (state.status === "loading") {
+      body = `<div class="meta">${escapeHtml(t(locale, "loading_stops"))}</div>`;
+    } else if (state.status === "empty") {
+      body = `<div class="meta">${escapeHtml(t(locale, "no_nearby_stops"))}</div>`;
+    } else if (!state.candidates.length) {
+      body = `<div class="meta">${escapeHtml(t(locale, "locating"))}</div>`;
+    } else {
+      const selected =
+        state.candidates.find((candidate) => candidate.id === state.selectedId) || state.candidates[0];
+      const nextBusCount = Math.max(1, Number(this._config.next_buses_count) || 3);
+      const buses = Array.isArray(selected?.buses) ? selected.buses.slice(0, nextBusCount) : [];
+      const minutes = selected?.next_minutes;
+
+      body = `
+        ${
+          state.candidates.length > 1
+            ? `<div class="candidate-row">
+                ${state.candidates
+                  .map(
+                    (candidate) => `
+                  <button
+                    class="candidate-pill${candidate.id === selected.id ? " active" : ""}"
+                    type="button"
+                    data-candidate-id="${escapeHtml(candidate.id)}"
+                  >${escapeHtml(candidate.name || candidate.id)} · ${Number(candidate.distance_m || 0).toFixed(0)} m</button>
+                `
+                  )
+                  .join("")}
+              </div>`
+            : ""
+        }
+        <div class="hero-top" style="margin-top: ${state.candidates.length > 1 ? "12px" : "0"};">
+          <div>
+            <div class="stop-name">${escapeHtml(selected?.name || "-")}</div>
+            <div class="meta">${escapeHtml(t(locale, "distance"))}: <b>${Number(selected?.distance_m || 0).toFixed(0)} m</b></div>
+          </div>
+          <div class="main-time">
+            ${minutes === null || minutes === undefined ? escapeHtml(t(locale, "no_estimations")) : escapeHtml(formatShortDuration(minutes))}
+            <small>${escapeHtml(t(locale, "arrival"))}</small>
+          </div>
+        </div>
+        ${
+          buses.length
+            ? `<div class="next-list">
+                ${buses
+                  .map(
+                    (bus) => `
+                  <div class="next-item">
+                    <strong>${escapeHtml(bus.linea || "-")}</strong>
+                    <span>${escapeHtml(formatShortDuration(bus.minutos))}</span>
+                    <span class="next-route">${escapeHtml(bus.ruta || "-")}</span>
+                  </div>
+                `
+                  )
+                  .join("")}
+              </div>`
+            : `<div class="meta" style="margin-top:6px;">${escapeHtml(t(locale, "no_upcoming"))}</div>`
+        }
+      `;
+    }
+
+    return `
+      <div class="section device-location-section">
+        <h4>${escapeHtml(title)}</h4>
+        <div class="hero" style="margin:0;">
+          ${body}
+        </div>
+      </div>
+    `;
   }
 
   _render() {
@@ -1129,6 +1389,34 @@ class VigoBusCard extends HTMLElement {
           color: var(--vigobus-muted);
         }
 
+        .candidate-row {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .candidate-pill {
+          font: inherit;
+          cursor: pointer;
+          padding: 7px 12px;
+          border-radius: 999px;
+          background: rgba(255,255,255,0.09);
+          border: 1px solid rgba(255,255,255,0.14);
+          color: #fff;
+          font-size: 12px;
+        }
+
+        .candidate-pill.active {
+          background: var(--vigobus-accent);
+          border-color: var(--vigobus-accent);
+          font-weight: 700;
+        }
+
+        .device-location-section .hero {
+          padding: 16px;
+          border-radius: 18px;
+        }
+
         .accent-line {
           height: 4px;
           background: linear-gradient(90deg, var(--vigobus-accent), rgba(255,255,255,0));
@@ -1333,6 +1621,8 @@ class VigoBusCard extends HTMLElement {
           </div>
         ` : ""}
 
+        ${this._config.device_location_mode ? this._renderDeviceLocationSection(locale) : ""}
+
         ${this._config.show_debug && primaryGroup ? `
           <div class="debug">
             ${escapeHtml(t(locale, "debug_nearest"))}:<br>
@@ -1345,6 +1635,12 @@ class VigoBusCard extends HTMLElement {
         ` : ""}
       </ha-card>
     `;
+
+    this.shadowRoot.querySelectorAll(".candidate-pill[data-candidate-id]").forEach((button) => {
+      button.addEventListener("click", () => {
+        this._selectDeviceCandidate(button.dataset.candidateId);
+      });
+    });
   }
 }
 
@@ -1374,6 +1670,11 @@ class VigoBusCardEditor extends HTMLElement {
       alerts_max: 3,
       accent_color: "#2a7fff",
       language: "auto",
+      device_location_mode: false,
+      device_location_title: "",
+      device_location_tie_margin_m: 60,
+      device_location_max_candidates: 3,
+      device_location_refresh_seconds: 45,
       stops: [],
       ...config,
     };
@@ -1610,6 +1911,33 @@ class VigoBusCardEditor extends HTMLElement {
         </div>
 
         <div class="row">
+          <div class="section-title">${escapeHtml(t(locale, "my_location"))}</div>
+          <label style="display:flex; align-items:center; gap:10px;">
+            <ha-switch id="device_location_mode"></ha-switch>
+            <span>${escapeHtml(t(locale, "device_location_enable"))}</span>
+          </label>
+          <ha-textfield id="device_location_title" label="${escapeHtml(t(locale, "title"))}"></ha-textfield>
+          <div class="grid2">
+            <ha-textfield
+              id="device_location_tie_margin_m"
+              label="${escapeHtml(t(locale, "device_location_margin"))}"
+              type="number"
+            ></ha-textfield>
+            <ha-textfield
+              id="device_location_max_candidates"
+              label="${escapeHtml(t(locale, "device_location_max_candidates"))}"
+              type="number"
+            ></ha-textfield>
+          </div>
+          <ha-textfield
+            id="device_location_refresh_seconds"
+            label="${escapeHtml(t(locale, "device_location_refresh"))}"
+            type="number"
+          ></ha-textfield>
+          <div class="hint">${escapeHtml(t(locale, "device_location_hint"))}</div>
+        </div>
+
+        <div class="row">
           <div class="section-title">${escapeHtml(t(locale, "selected_stops"))}</div>
           <div class="stop-list" id="stops-list"></div>
           <button class="add-stop" id="add-stop" type="button">+ ${escapeHtml(t(locale, "add_stop"))}</button>
@@ -1629,6 +1957,11 @@ class VigoBusCardEditor extends HTMLElement {
     const showAlerts = this.shadowRoot.getElementById("show_alerts");
     const alertsOnlyMainLine = this.shadowRoot.getElementById("alerts_only_main_line");
     const alertsMax = this.shadowRoot.getElementById("alerts_max");
+    const deviceLocationMode = this.shadowRoot.getElementById("device_location_mode");
+    const deviceLocationTitle = this.shadowRoot.getElementById("device_location_title");
+    const deviceLocationTieMarginM = this.shadowRoot.getElementById("device_location_tie_margin_m");
+    const deviceLocationMaxCandidates = this.shadowRoot.getElementById("device_location_max_candidates");
+    const deviceLocationRefreshSeconds = this.shadowRoot.getElementById("device_location_refresh_seconds");
     const addStop = this.shadowRoot.getElementById("add-stop");
     const stopsList = this.shadowRoot.getElementById("stops-list");
 
@@ -1670,6 +2003,21 @@ class VigoBusCardEditor extends HTMLElement {
     }
     if (alertsMax) {
       alertsMax.value = String(config.alerts_max ?? 3);
+    }
+    if (deviceLocationMode) {
+      deviceLocationMode.checked = Boolean(config.device_location_mode ?? false);
+    }
+    if (deviceLocationTitle) {
+      deviceLocationTitle.value = config.device_location_title || "";
+    }
+    if (deviceLocationTieMarginM) {
+      deviceLocationTieMarginM.value = String(config.device_location_tie_margin_m ?? 60);
+    }
+    if (deviceLocationMaxCandidates) {
+      deviceLocationMaxCandidates.value = String(config.device_location_max_candidates ?? 3);
+    }
+    if (deviceLocationRefreshSeconds) {
+      deviceLocationRefreshSeconds.value = String(config.device_location_refresh_seconds ?? 45);
     }
 
     if (stopsList) {
@@ -1725,6 +2073,11 @@ class VigoBusCardEditor extends HTMLElement {
     showAlerts?.addEventListener("change", (ev) => this._emitConfig({ show_alerts: ev.target.checked }));
     alertsOnlyMainLine?.addEventListener("change", (ev) => this._emitConfig({ alerts_only_main_line: ev.target.checked }));
     alertsMax?.addEventListener("input", (ev) => this._emitConfig({ alerts_max: Number(ev.target.value) || 3 }));
+    deviceLocationMode?.addEventListener("change", (ev) => this._emitConfig({ device_location_mode: ev.target.checked }));
+    deviceLocationTitle?.addEventListener("input", (ev) => this._emitConfig({ device_location_title: ev.target.value }));
+    deviceLocationTieMarginM?.addEventListener("input", (ev) => this._emitConfig({ device_location_tie_margin_m: Number(ev.target.value) || 60 }));
+    deviceLocationMaxCandidates?.addEventListener("input", (ev) => this._emitConfig({ device_location_max_candidates: Number(ev.target.value) || 3 }));
+    deviceLocationRefreshSeconds?.addEventListener("input", (ev) => this._emitConfig({ device_location_refresh_seconds: Number(ev.target.value) || 45 }));
     addStop?.addEventListener("click", () => this._addStop());
   }
 }
