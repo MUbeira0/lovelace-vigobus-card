@@ -53,10 +53,25 @@ the `vigobus-integration` backend (v2.1.0+) for the stateless
 `vigobus.nearest_stops` service, and the browser/app must grant the page
 location permission.
 
+Because the Home Assistant Companion **app** runs inside a WebView where
+`navigator.geolocation` is unreliable, the card falls back to the coordinates
+of the **viewer's `person` entity** (matched by the logged-in user) — the
+location the app already reports to the server. Control this with
+`device_location_source`:
+
+- `auto` (default): try the browser GPS, fall back to your `person` if it is
+  unavailable or denied (works in the app).
+- `browser`: browser GPS only, no fallback.
+- `person`: skip the browser and always use your `person` coordinates.
+
+For the `person` fallback to have fresh coordinates, enable *Background
+location* and *Single accurate location* in the Companion app sensors.
+
 ```yaml
 type: custom:vigobus-card
 title: VigoBus
 device_location_mode: true
+device_location_source: auto # auto | browser | person
 device_location_title: "" # optional, defaults to a translated label
 device_location_tie_margin_m: 60 # also show stops within this many meters of the closest one
 device_location_max_candidates: 3
