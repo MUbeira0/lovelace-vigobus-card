@@ -59,6 +59,10 @@ const TEXTS = {
     device_location_margin: "Margen de empate (metros)",
     device_location_max_candidates: "M\u00e1x. paradas candidatas",
     device_location_refresh: "Refresco (segundos)",
+    device_location_source: "Fuente de ubicaci\u00f3n",
+    device_location_source_auto: "Autom\u00e1tica (navegador y, si falla, tu persona)",
+    device_location_source_browser: "Solo navegador (GPS del dispositivo)",
+    device_location_source_person: "Solo tu persona (recomendado en la app)",
     device_location_hint: "Cada dispositivo que vea esta tarjeta consultar\u00e1 su propia ubicaci\u00f3n; no depende de ninguna entidad.",
   },
   en: {
@@ -117,6 +121,10 @@ const TEXTS = {
     device_location_margin: "Tie margin (meters)",
     device_location_max_candidates: "Max candidate stops",
     device_location_refresh: "Refresh (seconds)",
+    device_location_source: "Location source",
+    device_location_source_auto: "Automatic (browser, falls back to your person)",
+    device_location_source_browser: "Browser only (device GPS)",
+    device_location_source_person: "Your person only (recommended in the app)",
     device_location_hint: "Every device viewing this card looks up its own location; it does not depend on any entity.",
   },
   gl: {
@@ -175,6 +183,10 @@ const TEXTS = {
     device_location_margin: "Marxe de empate (metros)",
     device_location_max_candidates: "M\u00e1x. paradas candidatas",
     device_location_refresh: "Actualizaci\u00f3n (segundos)",
+    device_location_source: "Fonte de ubicaci\u00f3n",
+    device_location_source_auto: "Autom\u00e1tica (navegador e, se falla, a t\u00faa persoa)",
+    device_location_source_browser: "S\u00f3 navegador (GPS do dispositivo)",
+    device_location_source_person: "S\u00f3 a t\u00faa persoa (recomendado na app)",
     device_location_hint: "Cada dispositivo que vexa esta tarxeta consultar\u00e1 a s\u00faa propia ubicaci\u00f3n; non depende de ningunha entidade.",
   },
 };
@@ -668,6 +680,7 @@ class VigoBusCard extends HTMLElement {
       device_location_tie_margin_m: 60,
       device_location_max_candidates: 3,
       device_location_refresh_seconds: 45,
+      device_location_source: "auto",
       stop1_entity: "sensor.vigobus_nearest",
       stop1_title: "",
       stop2_entity: "",
@@ -795,6 +808,7 @@ class VigoBusCard extends HTMLElement {
       device_location_tie_margin_m: 60,
       device_location_max_candidates: 3,
       device_location_refresh_seconds: 45,
+      device_location_source: "auto",
       stops: [],
     };
     this._deviceLocationState = null;
@@ -823,6 +837,11 @@ class VigoBusCard extends HTMLElement {
       device_location_refresh_seconds: Number(
         config.device_location_refresh_seconds ?? this._config.device_location_refresh_seconds ?? 45
       ),
+      device_location_source: ["auto", "browser", "person"].includes(
+        String(config.device_location_source ?? this._config.device_location_source ?? "auto").toLowerCase()
+      )
+        ? String(config.device_location_source ?? this._config.device_location_source ?? "auto").toLowerCase()
+        : "auto",
       stops: normalizeConfiguredStops(config),
     };
     this._syncDeviceLocationLoop();
@@ -868,16 +887,121 @@ class VigoBusCard extends HTMLElement {
     }
   }
 
-  _refreshDeviceLocation() {
-    if (!navigator.geolocation) {
+  async _lookupNearestByCoords(lat, lon) {
+    if (!this._hass?.connection) {
+      throw new Error("no_connection");
+    }
+    const result = await this._hass.connection.sendMessagePromise({
+      type: "call_service",
+      domain: "vigobus",
+      service: "nearest_stops",
+      service_data: {
+        latitude: lat,
+        longitude: lon,
+        tie_margin_m: Number(this._config.device_location_tie_margin_m) || 60,
+        max_candidates: Number(this._config.device_location_max_candidates) || 3,
+      },
+      return_response: true,
+    });
+    return Array.isArray(result?.response?.candidates) ? result.response.candidates : [];
+  }
+
+  _findPersonForViewer() {
+    const uid = this._hass?.user?.id;
+    const states = this._hass?.states || {};
+    if (!uid) {
+      return null;
+    }
+    for (const entityId of Object.keys(states)) {
+      if (!entityId.startsWith("person.")) {
+        continue;
+      }
+      const attrs = states[entityId]?.attributes || {};
+      if (
+        attrs.user_id === uid &&
+        attrs.latitude !== null &&
+        attrs.latitude !== undefined &&
+        attrs.longitude !== null &&
+        attrs.longitude !== undefined
+      ) {
+        return states[entityId];
+      }
+    }
+    return null;
+  }
+
+  _applyCandidates(candidates, source) {
+    const previousSelected = this._deviceLocationState?.selectedId;
+    const stillValid = candidates.some((candidate) => candidate.id === previousSelected);
+    this._deviceLocationState = {
+      status: candidates.length ? "ready" : "empty",
+      error: null,
+      candidates,
+      selectedId: stillValid ? previousSelected : candidates[0]?.id ?? null,
+      updatedAt: new Date().toISOString(),
+      source,
+    };
+    this._render();
+  }
+
+  async _fallbackToPerson(fallbackError) {
+    const person = this._findPersonForViewer();
+    if (!person) {
       this._deviceLocationState = {
+        ...this._deviceLocationState,
         status: "error",
-        error: "no_geolocation",
-        candidates: [],
-        selectedId: null,
-        updatedAt: null,
+        error: fallbackError || "no_geolocation",
+        candidates: this._deviceLocationState?.candidates || [],
+        selectedId: this._deviceLocationState?.selectedId ?? null,
       };
       this._render();
+      return;
+    }
+    try {
+      this._deviceLocationState = { ...this._deviceLocationState, status: "loading" };
+      this._render();
+      const candidates = await this._lookupNearestByCoords(
+        person.attributes.latitude,
+        person.attributes.longitude
+      );
+      this._applyCandidates(candidates, "person");
+    } catch (err) {
+      this._deviceLocationState = {
+        ...this._deviceLocationState,
+        status: "error",
+        error: "service_error",
+      };
+      this._render();
+    }
+  }
+
+  _refreshDeviceLocation() {
+    const source = String(this._config.device_location_source || "auto").toLowerCase();
+
+    // Person-only mode, or a WebView/browser without geolocation (e.g. the
+    // Home Assistant Companion app): use the viewer's person entity, whose
+    // coordinates the app already reports to the server.
+    if (source === "person" || !navigator.geolocation) {
+      if (source === "browser") {
+        this._deviceLocationState = {
+          status: "error",
+          error: "no_geolocation",
+          candidates: [],
+          selectedId: null,
+          updatedAt: null,
+        };
+        this._render();
+        return;
+      }
+      this._deviceLocationState = {
+        status: "locating",
+        error: null,
+        candidates: this._deviceLocationState?.candidates || [],
+        selectedId: this._deviceLocationState?.selectedId ?? null,
+        updatedAt: this._deviceLocationState?.updatedAt ?? null,
+      };
+      this._render();
+      this._fallbackToPerson("no_geolocation");
       return;
     }
 
@@ -890,58 +1014,41 @@ class VigoBusCard extends HTMLElement {
     };
     this._render();
 
+    const allowPersonFallback = source !== "browser";
+
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         try {
           this._deviceLocationState = { ...this._deviceLocationState, status: "loading" };
           this._render();
-
-          if (!this._hass?.connection) {
-            throw new Error("no_connection");
-          }
-
-          const result = await this._hass.connection.sendMessagePromise({
-            type: "call_service",
-            domain: "vigobus",
-            service: "nearest_stops",
-            service_data: {
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-              tie_margin_m: Number(this._config.device_location_tie_margin_m) || 60,
-              max_candidates: Number(this._config.device_location_max_candidates) || 3,
-            },
-            return_response: true,
-          });
-
-          const candidates = Array.isArray(result?.response?.candidates)
-            ? result.response.candidates
-            : [];
-          const previousSelected = this._deviceLocationState?.selectedId;
-          const stillValid = candidates.some((candidate) => candidate.id === previousSelected);
-
-          this._deviceLocationState = {
-            status: candidates.length ? "ready" : "empty",
-            error: null,
-            candidates,
-            selectedId: stillValid ? previousSelected : candidates[0]?.id ?? null,
-            updatedAt: new Date().toISOString(),
-          };
+          const candidates = await this._lookupNearestByCoords(
+            position.coords.latitude,
+            position.coords.longitude
+          );
+          this._applyCandidates(candidates, "browser");
         } catch (err) {
           this._deviceLocationState = {
             ...this._deviceLocationState,
             status: "error",
             error: "service_error",
           };
+          this._render();
         }
-        this._render();
       },
       (geoError) => {
-        this._deviceLocationState = {
-          ...this._deviceLocationState,
-          status: "error",
-          error: geoError?.code === 1 ? "permission_denied" : "position_unavailable",
-        };
-        this._render();
+        // Geolocation denied/unavailable is the typical Companion-app case:
+        // fall back to the viewer's person coordinates when allowed.
+        const mappedError = geoError?.code === 1 ? "permission_denied" : "position_unavailable";
+        if (allowPersonFallback) {
+          this._fallbackToPerson(mappedError);
+        } else {
+          this._deviceLocationState = {
+            ...this._deviceLocationState,
+            status: "error",
+            error: mappedError,
+          };
+          this._render();
+        }
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 20000 }
     );
@@ -1675,6 +1782,7 @@ class VigoBusCardEditor extends HTMLElement {
       device_location_tie_margin_m: 60,
       device_location_max_candidates: 3,
       device_location_refresh_seconds: 45,
+      device_location_source: "auto",
       stops: [],
       ...config,
     };
@@ -1934,6 +2042,14 @@ class VigoBusCardEditor extends HTMLElement {
             label="${escapeHtml(t(locale, "device_location_refresh"))}"
             type="number"
           ></ha-textfield>
+          <label style="display:flex; flex-direction:column; gap:4px;">
+            <span>${escapeHtml(t(locale, "device_location_source"))}</span>
+            <select id="device_location_source">
+              <option value="auto">${escapeHtml(t(locale, "device_location_source_auto"))}</option>
+              <option value="browser">${escapeHtml(t(locale, "device_location_source_browser"))}</option>
+              <option value="person">${escapeHtml(t(locale, "device_location_source_person"))}</option>
+            </select>
+          </label>
           <div class="hint">${escapeHtml(t(locale, "device_location_hint"))}</div>
         </div>
 
@@ -1962,6 +2078,7 @@ class VigoBusCardEditor extends HTMLElement {
     const deviceLocationTieMarginM = this.shadowRoot.getElementById("device_location_tie_margin_m");
     const deviceLocationMaxCandidates = this.shadowRoot.getElementById("device_location_max_candidates");
     const deviceLocationRefreshSeconds = this.shadowRoot.getElementById("device_location_refresh_seconds");
+    const deviceLocationSource = this.shadowRoot.getElementById("device_location_source");
     const addStop = this.shadowRoot.getElementById("add-stop");
     const stopsList = this.shadowRoot.getElementById("stops-list");
 
@@ -2018,6 +2135,9 @@ class VigoBusCardEditor extends HTMLElement {
     }
     if (deviceLocationRefreshSeconds) {
       deviceLocationRefreshSeconds.value = String(config.device_location_refresh_seconds ?? 45);
+    }
+    if (deviceLocationSource) {
+      deviceLocationSource.value = String(config.device_location_source ?? "auto");
     }
 
     if (stopsList) {
@@ -2078,6 +2198,7 @@ class VigoBusCardEditor extends HTMLElement {
     deviceLocationTieMarginM?.addEventListener("input", (ev) => this._emitConfig({ device_location_tie_margin_m: Number(ev.target.value) || 60 }));
     deviceLocationMaxCandidates?.addEventListener("input", (ev) => this._emitConfig({ device_location_max_candidates: Number(ev.target.value) || 3 }));
     deviceLocationRefreshSeconds?.addEventListener("input", (ev) => this._emitConfig({ device_location_refresh_seconds: Number(ev.target.value) || 45 }));
+    deviceLocationSource?.addEventListener("change", (ev) => this._emitConfig({ device_location_source: ev.target.value || "auto" }));
     addStop?.addEventListener("click", () => this._addStop());
   }
 }
