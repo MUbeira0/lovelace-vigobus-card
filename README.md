@@ -11,7 +11,9 @@ Dashboard card for Home Assistant that displays VigoBus and Vitrasa arrival time
 ## Features
 
 - Main stop hero layout
-- Secondary stops with matching style — only the `nearest` (home) stop shows by default; add more via the `stops` config so unrelated VigoBus sensors elsewhere in your instance don't clutter the card
+- Secondary stops with matching style — the home `nearest` stop and any manually configured extra stops show automatically; per-device nearest sensors (one per tracked phone/person) are grouped separately instead of cluttering this list (see below)
+- Per-device nearest stops shown as a compact tab picker instead of one card per device, when you have several
+- Each upcoming bus is marked as live (GPS-tracked) or scheduled (timetable only), the same distinction apps like Moovit show
 - Route-aware upcoming buses, with pagination when a stop has more than a page of buses
 - Optional line filter (global or per stop) to only show arrivals for one bus line
 - Multiple route variants shown per line when available
@@ -45,9 +47,9 @@ If HACS does not add the resource automatically, add:
 - `line_filter`: Only show buses for this line (e.g. `C1`) everywhere on the card, unless a stop overrides it
 - `stops`: each entry accepts `entity`, `title`, and an optional `line` that overrides `line_filter` for that stop only
 
-Only the `nearest` (home) stop is shown by default — nothing else auto-populates the card. Add entries under `stops` for any other `sensor.vigobus_*` stop you want visible.
+By default the card shows the `nearest` (home) sensor plus any `sensor.vigobus_*` stop the `vigobus-integration` backend was configured with (its `extra_stops`). If the backend also creates per-device nearest sensors (`nearest_devices` / `auto_nearest_devices`, one per tracked phone or person), those are **not** included in that automatic list — with several devices they'd be a wall of near-identical cards. Instead they get their own "By device" section with a compact tab picker, so you switch between devices instead of scrolling past all of them. Explicitly add a `sensor.vigobus_*` entity to `stops` if you want a specific stop pinned regardless of these defaults.
 
-When a stop has more upcoming buses than fit on one page, a "next/prev" control appears below the list instead of hiding them.
+When a stop has more upcoming buses than fit on one page, a "next/prev" control appears below the list instead of hiding them. Each bus row also shows a small dot: green means the estimate comes from the bus's live GPS position, gray means it's a schedule-only projection (the vehicle hasn't reported a position yet) — hover it for the label.
 
 ## "My location" mode (per-viewer nearest stop)
 

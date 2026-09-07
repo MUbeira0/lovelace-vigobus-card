@@ -68,6 +68,9 @@ const TEXTS = {
     device_location_source_browser: "Solo navegador (GPS del dispositivo)",
     device_location_source_person: "Solo tu persona (recomendado en la app)",
     device_location_hint: "Cada dispositivo que vea esta tarjeta consultar\u00e1 su propia ubicaci\u00f3n; no depende de ninguna entidad.",
+    by_device: "Por dispositivo",
+    live: "En vivo",
+    scheduled: "Horario",
   },
   en: {
     unknown: "Unknown",
@@ -134,6 +137,9 @@ const TEXTS = {
     device_location_source_browser: "Browser only (device GPS)",
     device_location_source_person: "Your person only (recommended in the app)",
     device_location_hint: "Every device viewing this card looks up its own location; it does not depend on any entity.",
+    by_device: "By device",
+    live: "Live",
+    scheduled: "Scheduled",
   },
   gl: {
     unknown: "Desco\u00f1ecido",
@@ -200,6 +206,9 @@ const TEXTS = {
     device_location_source_browser: "S\u00f3 navegador (GPS do dispositivo)",
     device_location_source_person: "S\u00f3 a t\u00faa persoa (recomendado na app)",
     device_location_hint: "Cada dispositivo que vexa esta tarxeta consultar\u00e1 a s\u00faa propia ubicaci\u00f3n; non depende de ningunha entidade.",
+    by_device: "Por dispositivo",
+    live: "En directo",
+    scheduled: "Horario",
   },
 };
 
@@ -405,16 +414,22 @@ function normalizeConfiguredStops(configStops) {
   return stops;
 }
 
+function isPerDeviceNearestKey(key) {
+  // The integration auto-creates one "nearest_<slugified entity id>" sensor
+  // set per tracked person/device_tracker (nearest_devices /
+  // auto_nearest_devices). There can be many of these and they're personal,
+  // not shared dashboard stops, so they're excluded from the automatic list
+  // below. The classic home-based "nearest" key is untouched.
+  return typeof key === "string" && key !== "nearest" && key.startsWith("nearest_");
+}
+
 function buildSelectedGroups(hass, config) {
   const allGroups = buildStopGroups(hass);
   const configuredStops = normalizeConfiguredStops(config?.stops);
-  const nearestOnly = () => allGroups.filter((group) => group.key === "nearest");
+  const withoutDeviceNearest = () => allGroups.filter((group) => !isPerDeviceNearestKey(group.key));
 
   if (!configuredStops.length) {
-    // Only the "nearest" (home) stop shows by default. Anything else must be
-    // added explicitly via the "stops" config, so unrelated VigoBus sensors
-    // elsewhere in the instance don't clutter the card.
-    return uniqueByKey(nearestOnly());
+    return uniqueByKey(withoutDeviceNearest());
   }
 
   const selected = [];
@@ -439,7 +454,7 @@ function buildSelectedGroups(hass, config) {
     });
   }
 
-  return selected.length ? uniqueByKey(selected) : uniqueByKey(nearestOnly());
+  return selected.length ? uniqueByKey(selected) : uniqueByKey(withoutDeviceNearest());
 }
 
 function resolveLineFilter(group, config) {
@@ -448,17 +463,6 @@ function resolveLineFilter(group, config) {
     return override;
   }
   return String(config?.line_filter || "").trim();
-}
-
-function getNextBuses(group, count, lineFilter) {
-  const buses = getBusesFromGroup(group, lineFilter);
-  const limit = Math.max(0, Number(count) || 0);
-
-  return buses.slice(0, limit).map((bus) => ({
-    line: bus?.linea || "-",
-    route: formatRouteWithLine(bus?.linea, bus?.ruta),
-    minutes: bus?.minutos,
-  }));
 }
 
 function formatNextBusSummaryItem(item) {
@@ -653,6 +657,7 @@ function getBusesFromGroup(group, lineFilter) {
       linea: item.linea || "-",
       ruta: item.ruta || "-",
       minutos: parseMinutes(item.minutos),
+      metros: item.metros,
     }))
     .filter((item) => item.minutos !== null)
     .filter((item) => !target || normalizeLine(item.linea) === target);
@@ -681,6 +686,15 @@ function getAlertsFromGroup(group) {
 
 function normalizeLine(value) {
   return String(value || "").trim().toUpperCase().replaceAll(" ", "");
+}
+
+function isLiveBus(bus) {
+  // Vitrasa's API reports "metros" (remaining distance) only when the bus
+  // has an active GPS fix; schedule-only projections (early/late buses with
+  // no live position yet) come back with metros = -1. This is the same
+  // signal Moovit-style apps use to mark an arrival as "live" vs "scheduled".
+  const metros = Number(bus?.metros);
+  return Number.isFinite(metros) && metros >= 0;
 }
 
 function filterAlerts(alerts, mainLine, onlyMainLine, limit) {
@@ -871,6 +885,7 @@ class VigoBusCard extends HTMLElement {
     this._deviceLocationState = null;
     this._deviceLocationTimer = null;
     this._busPage = {};
+    this._selectedDeviceGroupKey = null;
     this.attachShadow({ mode: "open" });
   }
 
@@ -1144,7 +1159,12 @@ class VigoBusCard extends HTMLElement {
         </div>
         ${pageItems.map((bus) => `
           <div class="next-item">
-            <strong>${escapeHtml(bus.linea || "-")}</strong>
+            <strong>
+              <span
+                class="status-dot ${isLiveBus(bus) ? "live" : "scheduled"}"
+                title="${escapeHtml(isLiveBus(bus) ? t(locale, "live") : t(locale, "scheduled"))}"
+              ></span>${escapeHtml(bus.linea || "-")}
+            </strong>
             <span>${escapeHtml(formatShortDuration(bus.minutos))}</span>
             <span class="next-route">${escapeHtml(formatRouteWithLine(bus.linea, bus.ruta))}</span>
           </div>
@@ -1167,6 +1187,85 @@ class VigoBusCard extends HTMLElement {
             >${escapeHtml(t(locale, "next"))} ›</button>
           </div>
         ` : ""}
+      </div>
+    `;
+  }
+
+  _renderStopItem(group, locale, nextBusCount) {
+    const lineFilter = resolveLineFilter(group, this._config);
+    const minutes = getMinutesForGroup(group, lineFilter);
+    const line = getLineFromGroup(group, lineFilter);
+    const routeEntries = getRouteEntriesFromGroup(group, lineFilter);
+    const route = routeEntries.map((item) => formatRouteWithLine(item.line || line, item.route)).join(" | ");
+    const routeLabel = routeEntries.length > 1 ? t(locale, "routes") : t(locale, "route");
+    const allStopBuses = getBusesFromGroup(group, lineFilter);
+    const groupAlerts = getAlertsFromGroup(group);
+    const filteredAlerts = filterAlerts(
+      groupAlerts,
+      line,
+      Boolean(this._config.alerts_only_main_line),
+      this._config.alerts_max
+    );
+
+    return `
+      <div class="stop-item">
+        <div class="hero-top">
+          <div>
+            <div class="stop-name">${escapeHtml(group.title)}</div>
+            <div class="meta">${escapeHtml(t(locale, "line"))}: <b>${escapeHtml(line)}</b><br>${escapeHtml(routeLabel)}: <b>${escapeHtml(route)}</b></div>
+          </div>
+          <div class="main-time">${minutes === null ? escapeHtml(t(locale, "unavailable")) : escapeHtml(formatShortDuration(minutes))}</div>
+        </div>
+
+        <div class="mini-pill-row">
+          <div class="pill">${allStopBuses.length} ${escapeHtml(allStopBuses.length === 1 ? t(locale, "bus") : t(locale, "buses"))}</div>
+          ${this._config.show_alerts ? `<div class="pill">${filteredAlerts.length} ${escapeHtml(t(locale, "alerts"))}</div>` : ""}
+        </div>
+
+        ${this._renderBusList(`stop:${group.key}`, allStopBuses, nextBusCount, locale)}
+
+        ${this._config.show_alerts
+          ? (filteredAlerts.length
+            ? `<div class="next-list secondary-alerts">
+                <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 2px;">${escapeHtml(t(locale, "alerts"))}</div>
+                ${filteredAlerts.map((item) => `
+                  <div class="next-item alert-item">
+                    <strong>!</strong>
+                    <span class="alert-title">${escapeHtml(item?.title || "-")}</span>
+                    <span class="alert-lines">${escapeHtml(item?.lineas || "")}</span>
+                  </div>
+                `).join("")}
+              </div>`
+            : `<div class="meta" style="margin-top: 2px;">${escapeHtml(t(locale, "no_alerts"))}</div>`)
+          : ""}
+      </div>
+    `;
+  }
+
+  _renderDeviceGroupsSection(deviceGroups, locale, nextBusCount) {
+    const validKeys = new Set(deviceGroups.map((group) => group.key));
+    if (!this._selectedDeviceGroupKey || !validKeys.has(this._selectedDeviceGroupKey)) {
+      this._selectedDeviceGroupKey = deviceGroups[0].key;
+    }
+    const selected = deviceGroups.find((group) => group.key === this._selectedDeviceGroupKey) || deviceGroups[0];
+
+    return `
+      <div class="section">
+        <h4>${escapeHtml(t(locale, "by_device"))}</h4>
+        ${deviceGroups.length > 1 ? `
+          <div class="candidate-row" style="margin-bottom: 12px;">
+            ${deviceGroups.map((group) => `
+              <button
+                class="candidate-pill${group.key === selected.key ? " active" : ""}"
+                type="button"
+                data-device-key="${escapeHtml(group.key)}"
+              >${escapeHtml(group.title)}</button>
+            `).join("")}
+          </div>
+        ` : ""}
+        <div class="stop-list">
+          ${this._renderStopItem(selected, locale, nextBusCount)}
+        </div>
       </div>
     `;
   }
@@ -1261,7 +1360,9 @@ class VigoBusCard extends HTMLElement {
     const nextBusCount = Math.max(1, Number(this._config.next_buses_count) || 3);
 
     const secondaryGroups = groups.filter((group) => group.key !== primaryGroup?.key);
-    const visibleSecondary = this._config.show_all_stops ? secondaryGroups.slice(0, maxStops) : [];
+    const deviceGroups = secondaryGroups.filter((group) => isPerDeviceNearestKey(group.key));
+    const regularSecondaryGroups = secondaryGroups.filter((group) => !isPerDeviceNearestKey(group.key));
+    const visibleSecondary = this._config.show_all_stops ? regularSecondaryGroups.slice(0, maxStops) : [];
 
     const statusShort = mainMinutes === null ? t(locale, "no_estimations") : formatShortDuration(mainMinutes);
     const accent = this._config.accent_color || "#2a7fff";
@@ -1489,6 +1590,22 @@ class VigoBusCard extends HTMLElement {
 
         .next-item strong {
           font-weight: 800;
+        }
+
+        .status-dot {
+          display: inline-block;
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+          margin-right: 6px;
+          vertical-align: middle;
+          background: rgba(255,255,255,0.35);
+          background: color-mix(in srgb, var(--vigobus-text) 35%, transparent);
+        }
+
+        .status-dot.live {
+          background: #22c55e;
+          box-shadow: 0 0 0 2px color-mix(in srgb, #22c55e 25%, transparent);
         }
 
         .next-route {
@@ -1804,58 +1921,12 @@ class VigoBusCard extends HTMLElement {
           <div class="section">
             <h4>${escapeHtml(t(locale, "other_stops"))}</h4>
             <div class="stop-list">
-              ${visibleSecondary.map((group) => {
-                const lineFilter = resolveLineFilter(group, this._config);
-                const minutes = getMinutesForGroup(group, lineFilter);
-                const line = getLineFromGroup(group, lineFilter);
-                const routeEntries = getRouteEntriesFromGroup(group, lineFilter);
-                const route = routeEntries.map((item) => formatRouteWithLine(item.line || line, item.route)).join(" | ");
-                const routeLabel = routeEntries.length > 1 ? t(locale, "routes") : t(locale, "route");
-                const allStopBuses = getBusesFromGroup(group, lineFilter);
-                const groupAlerts = getAlertsFromGroup(group);
-                const filteredAlerts = filterAlerts(
-                  groupAlerts,
-                  line,
-                  Boolean(this._config.alerts_only_main_line),
-                  this._config.alerts_max
-                );
-                return `
-                  <div class="stop-item">
-                    <div class="hero-top">
-                      <div>
-                        <div class="stop-name">${escapeHtml(group.title)}</div>
-                        <div class="meta">${escapeHtml(t(locale, "line"))}: <b>${escapeHtml(line)}</b><br>${escapeHtml(routeLabel)}: <b>${escapeHtml(route)}</b></div>
-                      </div>
-                      <div class="main-time">${minutes === null ? escapeHtml(t(locale, "unavailable")) : escapeHtml(formatShortDuration(minutes))}</div>
-                    </div>
-
-                    <div class="mini-pill-row">
-                      <div class="pill">${allStopBuses.length} ${escapeHtml(allStopBuses.length === 1 ? t(locale, "bus") : t(locale, "buses"))}</div>
-                      ${this._config.show_alerts ? `<div class="pill">${filteredAlerts.length} ${escapeHtml(t(locale, "alerts"))}</div>` : ""}
-                    </div>
-
-                    ${this._renderBusList(`stop:${group.key}`, allStopBuses, nextBusCount, locale)}
-
-                    ${this._config.show_alerts
-                      ? (filteredAlerts.length
-                        ? `<div class="next-list secondary-alerts">
-                            <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 2px;">${escapeHtml(t(locale, "alerts"))}</div>
-                            ${filteredAlerts.map((item) => `
-                              <div class="next-item alert-item">
-                                <strong>!</strong>
-                                <span class="alert-title">${escapeHtml(item?.title || "-")}</span>
-                                <span class="alert-lines">${escapeHtml(item?.lineas || "")}</span>
-                              </div>
-                            `).join("")}
-                          </div>`
-                        : `<div class="meta" style="margin-top: 2px;">${escapeHtml(t(locale, "no_alerts"))}</div>`)
-                      : ""}
-                  </div>
-                `;
-              }).join("")}
+              ${visibleSecondary.map((group) => this._renderStopItem(group, locale, nextBusCount)).join("")}
             </div>
           </div>
         ` : ""}
+
+        ${deviceGroups.length ? this._renderDeviceGroupsSection(deviceGroups, locale, nextBusCount) : ""}
 
         ${this._config.device_location_mode ? this._renderDeviceLocationSection(locale) : ""}
 
@@ -1886,6 +1957,13 @@ class VigoBusCard extends HTMLElement {
         const key = button.dataset.pageKey;
         const dir = Number(button.dataset.pageDir) || 0;
         this._setBusPage(key, (this._busPage[key] || 0) + dir);
+      });
+    });
+
+    this.shadowRoot.querySelectorAll(".candidate-pill[data-device-key]").forEach((button) => {
+      button.addEventListener("click", () => {
+        this._selectedDeviceGroupKey = button.dataset.deviceKey;
+        this._render();
       });
     });
   }
