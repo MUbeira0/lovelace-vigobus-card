@@ -11,12 +11,14 @@ Dashboard card for Home Assistant that displays VigoBus and Vitrasa arrival time
 ## Features
 
 - Main stop hero layout
-- Secondary stops with matching style
-- Route-aware upcoming buses
+- Secondary stops with matching style — only the `nearest` (home) stop shows by default; add more via the `stops` config so unrelated VigoBus sensors elsewhere in your instance don't clutter the card
+- Route-aware upcoming buses, with pagination when a stop has more than a page of buses
+- Optional line filter (global or per stop) to only show arrivals for one bus line
 - Multiple route variants shown per line when available
 - Alerts per active line
 - Spanish, English, and Galician UI
 - Compact mode and card editor
+- Follows your Home Assistant light/dark theme instead of a fixed dark look
 
 ## Installation with HACS
 
@@ -40,6 +42,12 @@ If HACS does not add the resource automatically, add:
 - `show_alerts`: Show active service alerts
 - `show_all_stops`: Show main stop plus extra configured stops
 - `compact`: Use compact mode for tighter dashboards
+- `line_filter`: Only show buses for this line (e.g. `C1`) everywhere on the card, unless a stop overrides it
+- `stops`: each entry accepts `entity`, `title`, and an optional `line` that overrides `line_filter` for that stop only
+
+Only the `nearest` (home) stop is shown by default — nothing else auto-populates the card. Add entries under `stops` for any other `sensor.vigobus_*` stop you want visible.
+
+When a stop has more upcoming buses than fit on one page, a "next/prev" control appears below the list instead of hiding them.
 
 ## "My location" mode (per-viewer nearest stop)
 

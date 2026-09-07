@@ -48,6 +48,10 @@ const TEXTS = {
     show_alerts: "Mostrar alertas",
     alerts_only_main_line: "Solo l\u00ednea principal",
     alerts_max: "Max avisos",
+    prev: "Ant.",
+    next: "Sig.",
+    line_filter: "Filtro de l\u00ednea",
+    stop_line_filter: "L\u00ednea (opcional)",
     my_location: "Mi ubicaci\u00f3n",
     locating: "Buscando tu ubicaci\u00f3n\u2026",
     loading_stops: "Consultando paradas cercanas\u2026",
@@ -110,6 +114,10 @@ const TEXTS = {
     show_alerts: "Show alerts",
     alerts_only_main_line: "Only main line",
     alerts_max: "Max alerts",
+    prev: "Prev",
+    next: "Next",
+    line_filter: "Line filter",
+    stop_line_filter: "Line (optional)",
     my_location: "My location",
     locating: "Finding your location…",
     loading_stops: "Looking up nearby stops…",
@@ -172,6 +180,10 @@ const TEXTS = {
     show_alerts: "Amosar alertas",
     alerts_only_main_line: "S\u00f3 li\u00f1a principal",
     alerts_max: "Max avisos",
+    prev: "Ant.",
+    next: "Seg.",
+    line_filter: "Filtro de li\u00f1a",
+    stop_line_filter: "Li\u00f1a (opcional)",
     my_location: "A mi\u00f1a ubicaci\u00f3n",
     locating: "Buscando a t\u00faa ubicaci\u00f3n\u2026",
     loading_stops: "Consultando paradas pr\u00f3ximas\u2026",
@@ -367,6 +379,7 @@ function normalizeConfiguredStops(configStops) {
       .map((item) => ({
         entity: String(item?.entity || "").trim(),
         title: String(item?.title || "").trim(),
+        line: String(item?.line || "").trim(),
       }))
       .filter((item) => item.entity);
   }
@@ -383,8 +396,9 @@ function normalizeConfiguredStops(configStops) {
   for (let index = 1; index <= STOP_SLOT_COUNT; index += 1) {
     const entity = String(configStops[`stop${index}_entity`] || "").trim();
     const title = String(configStops[`stop${index}_title`] || "").trim();
+    const line = String(configStops[`stop${index}_line`] || "").trim();
     if (entity) {
-      stops.push({ entity, title });
+      stops.push({ entity, title, line });
     }
   }
 
@@ -394,9 +408,13 @@ function normalizeConfiguredStops(configStops) {
 function buildSelectedGroups(hass, config) {
   const allGroups = buildStopGroups(hass);
   const configuredStops = normalizeConfiguredStops(config?.stops);
+  const nearestOnly = () => allGroups.filter((group) => group.key === "nearest");
 
   if (!configuredStops.length) {
-    return uniqueByKey(allGroups);
+    // Only the "nearest" (home) stop shows by default. Anything else must be
+    // added explicitly via the "stops" config, so unrelated VigoBus sensors
+    // elsewhere in the instance don't clutter the card.
+    return uniqueByKey(nearestOnly());
   }
 
   const selected = [];
@@ -417,14 +435,23 @@ function buildSelectedGroups(hass, config) {
       title: stopConfig.title || group.title,
       entityId: stopConfig.entity,
       manualTitle: stopConfig.title || "",
+      lineFilter: stopConfig.line || "",
     });
   }
 
-  return selected.length ? uniqueByKey(selected) : uniqueByKey(allGroups);
+  return selected.length ? uniqueByKey(selected) : uniqueByKey(nearestOnly());
 }
 
-function getNextBuses(group, count) {
-  const buses = getBusesFromGroup(group);
+function resolveLineFilter(group, config) {
+  const override = String(group?.lineFilter || "").trim();
+  if (override) {
+    return override;
+  }
+  return String(config?.line_filter || "").trim();
+}
+
+function getNextBuses(group, count, lineFilter) {
+  const buses = getBusesFromGroup(group, lineFilter);
   const limit = Math.max(0, Number(count) || 0);
 
   return buses.slice(0, limit).map((bus) => ({
@@ -486,16 +513,27 @@ function getMinutesFromEntity(entity) {
   return parseMinutes(entity.state);
 }
 
-function getLineFromGroup(group) {
+function getMinutesForGroup(group, lineFilter) {
+  if (lineFilter) {
+    const buses = getBusesFromGroup(group, lineFilter);
+    return buses.length ? buses[0].minutos : null;
+  }
+  return getMinutesFromEntity(group?.entity);
+}
+
+function getLineFromGroup(group, lineFilter) {
+  if (lineFilter) {
+    return normalizeLine(lineFilter);
+  }
   return group?.entity?.attributes?.linea || group?.linea?.state || "-";
 }
 
-function getRouteFromGroup(group) {
-  const routes = getRoutesFromGroup(group);
+function getRouteFromGroup(group, lineFilter) {
+  const routes = getRoutesFromGroup(group, lineFilter);
   return routes[0] || "-";
 }
 
-function getRoutesFromGroup(group) {
+function getRoutesFromGroup(group, lineFilter) {
   const routes = [];
   const seen = new Set();
 
@@ -512,23 +550,28 @@ function getRoutesFromGroup(group) {
     routes.push(text);
   };
 
-  const providedRoutes = group?.entity?.attributes?.rutas;
-  if (Array.isArray(providedRoutes)) {
-    for (const route of providedRoutes) {
-      appendRoute(route);
+  if (!lineFilter) {
+    const providedRoutes = group?.entity?.attributes?.rutas;
+    if (Array.isArray(providedRoutes)) {
+      for (const route of providedRoutes) {
+        appendRoute(route);
+      }
     }
   }
 
-  for (const bus of getBusesFromGroup(group)) {
+  for (const bus of getBusesFromGroup(group, lineFilter)) {
     appendRoute(bus?.ruta);
   }
-  appendRoute(group?.entity?.attributes?.ruta);
-  appendRoute(group?.ruta?.state);
+
+  if (!lineFilter) {
+    appendRoute(group?.entity?.attributes?.ruta);
+    appendRoute(group?.ruta?.state);
+  }
 
   return routes.length ? routes : ["-"];
 }
 
-function getRouteEntriesFromGroup(group) {
+function getRouteEntriesFromGroup(group, lineFilter) {
   const entries = [];
   const seen = new Set();
 
@@ -548,20 +591,20 @@ function getRouteEntriesFromGroup(group) {
     entries.push({ line: normalizedLine, route: normalizedRoute });
   };
 
-  const buses = getBusesFromGroup(group);
+  const buses = getBusesFromGroup(group, lineFilter);
   if (buses.length) {
     for (const bus of buses) {
       appendEntry(bus?.linea, bus?.ruta);
     }
-    return entries.length ? entries : [{ line: getLineFromGroup(group), route: getRouteFromGroup(group) }];
+    return entries.length ? entries : [{ line: getLineFromGroup(group, lineFilter), route: getRouteFromGroup(group, lineFilter) }];
   }
 
-  const fallbackLine = getLineFromGroup(group);
-  for (const route of getRoutesFromGroup(group)) {
+  const fallbackLine = getLineFromGroup(group, lineFilter);
+  for (const route of getRoutesFromGroup(group, lineFilter)) {
     appendEntry(fallbackLine, route);
   }
 
-  return entries.length ? entries : [{ line: fallbackLine, route: getRouteFromGroup(group) }];
+  return entries.length ? entries : [{ line: fallbackLine, route: getRouteFromGroup(group, lineFilter) }];
 }
 
 function formatRouteWithLine(line, route) {
@@ -596,11 +639,13 @@ function getDistanceFromGroup(group) {
   return Number.isNaN(number) ? null : number;
 }
 
-function getBusesFromGroup(group) {
+function getBusesFromGroup(group, lineFilter) {
   const buses = group?.entity?.attributes?.buses;
   if (!Array.isArray(buses)) {
     return [];
   }
+
+  const target = lineFilter ? normalizeLine(lineFilter) : "";
 
   const normalized = buses
     .filter((item) => item && typeof item === "object")
@@ -609,10 +654,20 @@ function getBusesFromGroup(group) {
       ruta: item.ruta || "-",
       minutos: parseMinutes(item.minutos),
     }))
-    .filter((item) => item.minutos !== null);
+    .filter((item) => item.minutos !== null)
+    .filter((item) => !target || normalizeLine(item.linea) === target);
 
   normalized.sort((a, b) => a.minutos - b.minutos);
   return normalized;
+}
+
+function filterBusesByLine(buses, lineFilter) {
+  const target = lineFilter ? normalizeLine(lineFilter) : "";
+  const list = Array.isArray(buses) ? buses : [];
+  if (!target) {
+    return list;
+  }
+  return list.filter((bus) => normalizeLine(bus?.linea) === target);
 }
 
 function getUpdatedAtFromGroup(group) {
@@ -675,6 +730,7 @@ class VigoBusCard extends HTMLElement {
       alerts_max: 3,
       accent_color: "#2a7fff",
       language: "auto",
+      line_filter: "",
       device_location_mode: false,
       device_location_title: "",
       device_location_tie_margin_m: 60,
@@ -803,6 +859,7 @@ class VigoBusCard extends HTMLElement {
       alerts_max: 3,
       accent_color: "#2a7fff",
       language: "auto",
+      line_filter: "",
       device_location_mode: false,
       device_location_title: "",
       device_location_tie_margin_m: 60,
@@ -813,6 +870,7 @@ class VigoBusCard extends HTMLElement {
     };
     this._deviceLocationState = null;
     this._deviceLocationTimer = null;
+    this._busPage = {};
     this.attachShadow({ mode: "open" });
   }
 
@@ -1062,6 +1120,57 @@ class VigoBusCard extends HTMLElement {
     this._render();
   }
 
+  _setBusPage(key, page) {
+    this._busPage = { ...this._busPage, [key]: Math.max(0, page) };
+    this._render();
+  }
+
+  _renderBusList(key, allBuses, pageSize, locale) {
+    const buses = Array.isArray(allBuses) ? allBuses : [];
+    const size = Math.max(1, Number(pageSize) || 3);
+    const totalPages = Math.max(1, Math.ceil(buses.length / size));
+    const page = Math.min(Math.max(0, this._busPage[key] || 0), totalPages - 1);
+    const pageItems = buses.slice(page * size, page * size + size);
+
+    if (!buses.length) {
+      return `<div class="next-list"><div class="meta" style="font-size:12px;">${escapeHtml(t(locale, "no_upcoming"))}</div></div>`;
+    }
+
+    return `
+      <div class="next-list">
+        <div class="next-list-head">
+          <span class="next-list-title">${escapeHtml(t(locale, "following"))}</span>
+          ${totalPages > 1 ? `<span class="page-indicator">${page + 1}/${totalPages}</span>` : ""}
+        </div>
+        ${pageItems.map((bus) => `
+          <div class="next-item">
+            <strong>${escapeHtml(bus.linea || "-")}</strong>
+            <span>${escapeHtml(formatShortDuration(bus.minutos))}</span>
+            <span class="next-route">${escapeHtml(formatRouteWithLine(bus.linea, bus.ruta))}</span>
+          </div>
+        `).join("")}
+        ${totalPages > 1 ? `
+          <div class="page-controls">
+            <button
+              class="page-btn"
+              type="button"
+              data-page-key="${escapeHtml(key)}"
+              data-page-dir="-1"
+              ${page <= 0 ? "disabled" : ""}
+            >‹ ${escapeHtml(t(locale, "prev"))}</button>
+            <button
+              class="page-btn"
+              type="button"
+              data-page-key="${escapeHtml(key)}"
+              data-page-dir="1"
+              ${page >= totalPages - 1 ? "disabled" : ""}
+            >${escapeHtml(t(locale, "next"))} ›</button>
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }
+
   _renderDeviceLocationSection(locale) {
     const state = this._deviceLocationState || { status: "locating", candidates: [], selectedId: null };
     const title = String(this._config.device_location_title || "").trim() || t(locale, "my_location");
@@ -1085,8 +1194,9 @@ class VigoBusCard extends HTMLElement {
       const selected =
         state.candidates.find((candidate) => candidate.id === state.selectedId) || state.candidates[0];
       const nextBusCount = Math.max(1, Number(this._config.next_buses_count) || 3);
-      const buses = Array.isArray(selected?.buses) ? selected.buses.slice(0, nextBusCount) : [];
-      const minutes = selected?.next_minutes;
+      const lineFilter = String(this._config.line_filter || "").trim();
+      const buses = filterBusesByLine(selected?.buses, lineFilter);
+      const minutes = buses.length ? buses[0].minutos : (lineFilter ? null : selected?.next_minutes);
 
       body = `
         ${
@@ -1116,23 +1226,7 @@ class VigoBusCard extends HTMLElement {
             <small>${escapeHtml(t(locale, "arrival"))}</small>
           </div>
         </div>
-        ${
-          buses.length
-            ? `<div class="next-list">
-                ${buses
-                  .map(
-                    (bus) => `
-                  <div class="next-item">
-                    <strong>${escapeHtml(bus.linea || "-")}</strong>
-                    <span>${escapeHtml(formatShortDuration(bus.minutos))}</span>
-                    <span class="next-route">${escapeHtml(bus.ruta || "-")}</span>
-                  </div>
-                `
-                  )
-                  .join("")}
-              </div>`
-            : `<div class="meta" style="margin-top:6px;">${escapeHtml(t(locale, "no_upcoming"))}</div>`
-        }
+        ${this._renderBusList(`device:${selected?.id}`, buses, nextBusCount, locale)}
       `;
     }
 
@@ -1155,9 +1249,10 @@ class VigoBusCard extends HTMLElement {
     const groups = sortGroupsForDisplay(buildSelectedGroups(this._hass, this._config));
     const primaryGroup = getPrimaryGroup(groups, this._config.primary_entity);
     const compact = Boolean(this._config.compact);
-    const mainMinutes = getMinutesFromEntity(primaryGroup?.entity);
-    const mainLine = getLineFromGroup(primaryGroup);
-    const mainRouteEntries = getRouteEntriesFromGroup(primaryGroup);
+    const mainLineFilter = resolveLineFilter(primaryGroup, this._config);
+    const mainMinutes = getMinutesForGroup(primaryGroup, mainLineFilter);
+    const mainLine = getLineFromGroup(primaryGroup, mainLineFilter);
+    const mainRouteEntries = getRouteEntriesFromGroup(primaryGroup, mainLineFilter);
     const mainRoute = mainRouteEntries.map((item) => formatRouteWithLine(item.line || mainLine, item.route)).join(" | ");
     const mainRouteLabel = mainRouteEntries.length > 1 ? t(locale, "routes") : t(locale, "route");
     const mainDistance = getDistanceFromGroup(primaryGroup);
@@ -1170,7 +1265,7 @@ class VigoBusCard extends HTMLElement {
 
     const statusShort = mainMinutes === null ? t(locale, "no_estimations") : formatShortDuration(mainMinutes);
     const accent = this._config.accent_color || "#2a7fff";
-    const nextBuses = getNextBuses(primaryGroup, nextBusCount);
+    const mainAllBuses = getBusesFromGroup(primaryGroup, mainLineFilter);
     const mainTitle = getDisplayTitle(primaryGroup, t(locale, "selected_stops"));
     const stale = isGroupStale(primaryGroup);
     const alerts = getAlertsFromGroup(primaryGroup);
@@ -1185,12 +1280,26 @@ class VigoBusCard extends HTMLElement {
       <style>
         :host {
           display: block;
-          --vigobus-bg: linear-gradient(135deg, rgba(17,24,39,0.96), rgba(15,118,110,0.86));
-          --vigobus-surface: rgba(255,255,255,0.08);
-          --vigobus-text: #ffffff;
-          --vigobus-muted: rgba(255,255,255,0.72);
+          /* Derived from Home Assistant's own theme variables so the card
+             follows the active light/dark theme instead of forcing one
+             look. The literal fallbacks only apply on very old HA frontends
+             that don't define these variables yet. */
+          --vigobus-bg: var(--ha-card-background, var(--card-background-color, #10151d));
+          --vigobus-text: var(--primary-text-color, #ffffff);
+          --vigobus-muted: var(--secondary-text-color, rgba(255,255,255,0.72));
+          --vigobus-divider: var(--divider-color, rgba(255,255,255,0.14));
           --vigobus-accent: ${accent};
-          --vigobus-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+          /* "Glass" overlay tones mixed from the current text color, so they
+             read as light veils on dark backgrounds and dark veils on light
+             backgrounds automatically. color-mix() has broad support in
+             current browsers/WebViews; the rgba() declared just before each
+             one is the fallback for anything older. */
+          --vigobus-veil-weak: rgba(255,255,255,0.06);
+          --vigobus-veil-weak: color-mix(in srgb, var(--vigobus-text) 6%, transparent);
+          --vigobus-veil: rgba(255,255,255,0.10);
+          --vigobus-veil: color-mix(in srgb, var(--vigobus-text) 10%, transparent);
+          --vigobus-veil-strong: rgba(255,255,255,0.16);
+          --vigobus-veil-strong: color-mix(in srgb, var(--vigobus-text) 16%, transparent);
           color: var(--vigobus-text);
           font-family: var(--paper-font-body1_-_font-family, var(--ha-font-family, sans-serif));
         }
@@ -1199,8 +1308,8 @@ class VigoBusCard extends HTMLElement {
           overflow: hidden;
           border-radius: 24px;
           background: var(--vigobus-bg);
-          box-shadow: var(--vigobus-shadow);
-          border: 1px solid rgba(255,255,255,0.12);
+          box-shadow: var(--ha-card-box-shadow, 0 10px 26px rgba(0,0,0,0.18));
+          border: 1px solid var(--vigobus-divider);
         }
 
         ha-card.compact {
@@ -1239,8 +1348,8 @@ class VigoBusCard extends HTMLElement {
           min-width: 86px;
           padding: 10px 12px;
           border-radius: 16px;
-          background: linear-gradient(135deg, rgba(255,255,255,0.16), rgba(255,255,255,0.08));
-          border: 1px solid rgba(255,255,255,0.12);
+          background: linear-gradient(135deg, var(--vigobus-veil-strong), var(--vigobus-veil));
+          border: 1px solid var(--vigobus-divider);
           text-align: right;
           backdrop-filter: blur(6px);
         }
@@ -1263,8 +1372,8 @@ class VigoBusCard extends HTMLElement {
           margin: 0 20px 18px;
           padding: 18px;
           border-radius: 20px;
-          background: linear-gradient(145deg, rgba(255,255,255,0.12), rgba(255,255,255,0.05));
-          border: 1px solid rgba(255,255,255,0.10);
+          background: linear-gradient(145deg, var(--vigobus-veil), var(--vigobus-veil-weak));
+          border: 1px solid var(--vigobus-divider);
         }
 
         .hero-top {
@@ -1294,7 +1403,7 @@ class VigoBusCard extends HTMLElement {
           font-size: 36px;
           font-weight: 900;
           line-height: 1;
-          color: #fff;
+          color: var(--vigobus-text);
           text-align: right;
         }
 
@@ -1314,9 +1423,9 @@ class VigoBusCard extends HTMLElement {
         .pill {
           padding: 8px 11px;
           border-radius: 999px;
-          background: rgba(255,255,255,0.11);
-          border: 1px solid rgba(255,255,255,0.1);
-          color: #fff;
+          background: var(--vigobus-veil);
+          border: 1px solid var(--vigobus-divider);
+          color: var(--vigobus-text);
           font-size: 12px;
         }
 
@@ -1326,6 +1435,45 @@ class VigoBusCard extends HTMLElement {
           margin-top: 14px;
         }
 
+        .next-list-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          color: var(--vigobus-muted);
+          font-size: 12px;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+        }
+
+        .page-indicator {
+          font-size: 11px;
+          letter-spacing: normal;
+          text-transform: none;
+        }
+
+        .page-controls {
+          display: flex;
+          justify-content: space-between;
+          gap: 8px;
+          margin-top: 2px;
+        }
+
+        .page-btn {
+          font: inherit;
+          cursor: pointer;
+          padding: 6px 12px;
+          border-radius: 999px;
+          background: var(--vigobus-veil-weak);
+          border: 1px solid var(--vigobus-divider);
+          color: var(--vigobus-text);
+          font-size: 12px;
+        }
+
+        .page-btn:disabled {
+          opacity: 0.4;
+          cursor: default;
+        }
+
         .next-item {
           display: grid;
           grid-template-columns: auto auto minmax(0, 1fr);
@@ -1333,9 +1481,9 @@ class VigoBusCard extends HTMLElement {
           gap: 10px;
           padding: 8px 10px;
           border-radius: 14px;
-          background: rgba(255,255,255,0.07);
-          border: 1px solid rgba(255,255,255,0.08);
-          color: #fff;
+          background: var(--vigobus-veil-weak);
+          border: 1px solid var(--vigobus-divider);
+          color: var(--vigobus-text);
           font-size: 13px;
         }
 
@@ -1458,8 +1606,8 @@ class VigoBusCard extends HTMLElement {
         .stop-item {
           padding: 18px;
           border-radius: 20px;
-          background: linear-gradient(145deg, rgba(255,255,255,0.12), rgba(255,255,255,0.05));
-          border: 1px solid rgba(255,255,255,0.10);
+          background: linear-gradient(145deg, var(--vigobus-veil), var(--vigobus-veil-weak));
+          border: 1px solid var(--vigobus-divider);
           display: grid;
           gap: 12px;
         }
@@ -1484,8 +1632,9 @@ class VigoBusCard extends HTMLElement {
           margin: 0 20px 20px;
           padding: 13px 15px;
           border-radius: 16px;
-          background: rgba(0,0,0,0.18);
-          border: 1px dashed rgba(255,255,255,0.18);
+          background: rgba(0,0,0,0.12);
+          background: color-mix(in srgb, var(--vigobus-text) 8%, transparent);
+          border: 1px dashed var(--vigobus-divider);
           color: var(--vigobus-muted);
           font-size: 12px;
           line-height: 1.5;
@@ -1507,15 +1656,16 @@ class VigoBusCard extends HTMLElement {
           cursor: pointer;
           padding: 7px 12px;
           border-radius: 999px;
-          background: rgba(255,255,255,0.09);
-          border: 1px solid rgba(255,255,255,0.14);
-          color: #fff;
+          background: var(--vigobus-veil);
+          border: 1px solid var(--vigobus-divider);
+          color: var(--vigobus-text);
           font-size: 12px;
         }
 
         .candidate-pill.active {
           background: var(--vigobus-accent);
           border-color: var(--vigobus-accent);
+          color: #fff;
           font-weight: 700;
         }
 
@@ -1628,23 +1778,12 @@ class VigoBusCard extends HTMLElement {
             </div>
             <div class="pill-row">
               <div class="pill">${escapeHtml(primaryGroup.key === "nearest" ? t(locale, "nearest") : t(locale, "main_stop"))}</div>
-              <div class="pill">${nextBuses.length} ${escapeHtml(nextBuses.length === 1 ? t(locale, "bus") : t(locale, "buses"))}</div>
+              <div class="pill">${mainAllBuses.length} ${escapeHtml(mainAllBuses.length === 1 ? t(locale, "bus") : t(locale, "buses"))}</div>
               ${this._config.show_alerts ? `<div class="pill">${escapeHtml(visibleAlerts.length)} ${escapeHtml(t(locale, "alerts"))}</div>` : ""}
               ${stale ? `<div class="pill">${escapeHtml(t(locale, "stale"))}</div><div class="pill">${escapeHtml(t(locale, "offline"))}</div>` : ""}
               ${primaryGroup.entity?.state === "unknown" ? `<div class="pill">${escapeHtml(t(locale, "no_data"))}</div>` : ""}
             </div>
-            ${nextBuses.length ? `
-              <div class="next-list">
-                <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 4px;">${escapeHtml(t(locale, "following"))}</div>
-                ${nextBuses.map((bus) => `
-                  <div class="next-item">
-                    <strong>${escapeHtml(bus.line)}</strong>
-                    <span>${escapeHtml(formatShortDuration(bus.minutes))}</span>
-                    <span class="next-route">${escapeHtml(bus.route)}</span>
-                  </div>
-                `).join("")}
-              </div>
-            ` : `<div class="next-list"><div style="color: var(--vigobus-muted); font-size: 12px;">${escapeHtml(t(locale, "no_upcoming"))}</div></div>`}
+            ${this._renderBusList(`stop:${primaryGroup.key}`, mainAllBuses, nextBusCount, locale)}
 
             ${this._config.show_alerts ? `<div class="next-list">
               <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 4px;">${escapeHtml(t(locale, "alerts"))}</div>
@@ -1666,12 +1805,13 @@ class VigoBusCard extends HTMLElement {
             <h4>${escapeHtml(t(locale, "other_stops"))}</h4>
             <div class="stop-list">
               ${visibleSecondary.map((group) => {
-                const minutes = getMinutesFromEntity(group.entity);
-                const line = getLineFromGroup(group);
-                const routeEntries = getRouteEntriesFromGroup(group);
+                const lineFilter = resolveLineFilter(group, this._config);
+                const minutes = getMinutesForGroup(group, lineFilter);
+                const line = getLineFromGroup(group, lineFilter);
+                const routeEntries = getRouteEntriesFromGroup(group, lineFilter);
                 const route = routeEntries.map((item) => formatRouteWithLine(item.line || line, item.route)).join(" | ");
                 const routeLabel = routeEntries.length > 1 ? t(locale, "routes") : t(locale, "route");
-                const nextStops = getNextBuses(group, nextBusCount);
+                const allStopBuses = getBusesFromGroup(group, lineFilter);
                 const groupAlerts = getAlertsFromGroup(group);
                 const filteredAlerts = filterAlerts(
                   groupAlerts,
@@ -1690,22 +1830,11 @@ class VigoBusCard extends HTMLElement {
                     </div>
 
                     <div class="mini-pill-row">
-                      <div class="pill">${nextStops.length} ${escapeHtml(nextStops.length === 1 ? t(locale, "bus") : t(locale, "buses"))}</div>
+                      <div class="pill">${allStopBuses.length} ${escapeHtml(allStopBuses.length === 1 ? t(locale, "bus") : t(locale, "buses"))}</div>
                       ${this._config.show_alerts ? `<div class="pill">${filteredAlerts.length} ${escapeHtml(t(locale, "alerts"))}</div>` : ""}
                     </div>
 
-                    ${nextStops.length ? `
-                      <div class="next-list">
-                        <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 2px;">${escapeHtml(t(locale, "following"))}</div>
-                        ${nextStops.map((item) => `
-                          <div class="next-item">
-                            <strong>${escapeHtml(item.line)}</strong>
-                            <span>${escapeHtml(formatShortDuration(item.minutes))}</span>
-                            <span class="next-route">${escapeHtml(item.route || "-")}</span>
-                          </div>
-                        `).join("")}
-                      </div>
-                    ` : `<div class="meta" style="margin-top: 2px;">${escapeHtml(t(locale, "no_upcoming"))}</div>`}
+                    ${this._renderBusList(`stop:${group.key}`, allStopBuses, nextBusCount, locale)}
 
                     ${this._config.show_alerts
                       ? (filteredAlerts.length
@@ -1748,6 +1877,17 @@ class VigoBusCard extends HTMLElement {
         this._selectDeviceCandidate(button.dataset.candidateId);
       });
     });
+
+    this.shadowRoot.querySelectorAll(".page-btn[data-page-key]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (button.disabled) {
+          return;
+        }
+        const key = button.dataset.pageKey;
+        const dir = Number(button.dataset.pageDir) || 0;
+        this._setBusPage(key, (this._busPage[key] || 0) + dir);
+      });
+    });
   }
 }
 
@@ -1777,6 +1917,7 @@ class VigoBusCardEditor extends HTMLElement {
       alerts_max: 3,
       accent_color: "#2a7fff",
       language: "auto",
+      line_filter: "",
       device_location_mode: false,
       device_location_title: "",
       device_location_tie_margin_m: 60,
@@ -1819,7 +1960,7 @@ class VigoBusCardEditor extends HTMLElement {
 
   _addStop() {
     const stops = normalizeConfiguredStops(this._config.stops);
-    stops.push({ entity: "", title: "" });
+    stops.push({ entity: "", title: "", line: "" });
     this._emitConfig({ stops });
   }
 
@@ -1871,6 +2012,7 @@ class VigoBusCardEditor extends HTMLElement {
           border-radius: 16px;
           border: 1px solid var(--divider-color);
           background: rgba(255, 255, 255, 0.03);
+          background: color-mix(in srgb, var(--primary-text-color) 4%, transparent);
           display: grid;
           gap: 10px;
         }
@@ -1905,7 +2047,7 @@ class VigoBusCardEditor extends HTMLElement {
 
         .stop-grid {
           display: grid;
-          grid-template-columns: 1.6fr 1fr auto;
+          grid-template-columns: 1.4fr 1fr 0.7fr;
           gap: 10px;
         }
 
@@ -2014,6 +2156,13 @@ class VigoBusCardEditor extends HTMLElement {
           ></ha-textfield>
         </div>
 
+        <div class="row">
+          <ha-textfield
+            id="line_filter"
+            label="${escapeHtml(t(locale, "line_filter"))}"
+          ></ha-textfield>
+        </div>
+
         <div class="hint">
           ${escapeHtml(t(locale, "stop_hint"))}
         </div>
@@ -2073,6 +2222,7 @@ class VigoBusCardEditor extends HTMLElement {
     const showAlerts = this.shadowRoot.getElementById("show_alerts");
     const alertsOnlyMainLine = this.shadowRoot.getElementById("alerts_only_main_line");
     const alertsMax = this.shadowRoot.getElementById("alerts_max");
+    const lineFilter = this.shadowRoot.getElementById("line_filter");
     const deviceLocationMode = this.shadowRoot.getElementById("device_location_mode");
     const deviceLocationTitle = this.shadowRoot.getElementById("device_location_title");
     const deviceLocationTieMarginM = this.shadowRoot.getElementById("device_location_tie_margin_m");
@@ -2121,6 +2271,9 @@ class VigoBusCardEditor extends HTMLElement {
     if (alertsMax) {
       alertsMax.value = String(config.alerts_max ?? 3);
     }
+    if (lineFilter) {
+      lineFilter.value = config.line_filter || "";
+    }
     if (deviceLocationMode) {
       deviceLocationMode.checked = Boolean(config.device_location_mode ?? false);
     }
@@ -2153,14 +2306,16 @@ class VigoBusCardEditor extends HTMLElement {
               <div class="stop-grid">
                 <ha-entity-picker class="stop-entity" data-index="${index}"></ha-entity-picker>
                 <ha-textfield class="stop-title" data-index="${index}" label="${escapeHtml(t(locale, "title"))}"></ha-textfield>
-                <div class="small-hint" style="align-self:center;">${escapeHtml(t(locale, "entity_hint"))}</div>
+                <ha-textfield class="stop-line" data-index="${index}" label="${escapeHtml(t(locale, "stop_line_filter"))}"></ha-textfield>
               </div>
+              <div class="small-hint">${escapeHtml(t(locale, "entity_hint"))}</div>
             </div>
           `).join("")
         : `<div class="hint">${escapeHtml(t(locale, "entity_hint"))}</div>`;
 
       const rowEntities = this.shadowRoot.querySelectorAll(".stop-entity");
       const rowTitles = this.shadowRoot.querySelectorAll(".stop-title");
+      const rowLines = this.shadowRoot.querySelectorAll(".stop-line");
       const removeButtons = this.shadowRoot.querySelectorAll("button[data-remove]");
 
       rowEntities.forEach((element, index) => {
@@ -2174,6 +2329,11 @@ class VigoBusCardEditor extends HTMLElement {
       rowTitles.forEach((element, index) => {
         element.value = stops[index]?.title || "";
         element.addEventListener("input", (ev) => this._updateStop(index, { title: ev.target.value }));
+      });
+
+      rowLines.forEach((element, index) => {
+        element.value = stops[index]?.line || "";
+        element.addEventListener("input", (ev) => this._updateStop(index, { line: ev.target.value }));
       });
 
       removeButtons.forEach((button) => {
@@ -2193,6 +2353,7 @@ class VigoBusCardEditor extends HTMLElement {
     showAlerts?.addEventListener("change", (ev) => this._emitConfig({ show_alerts: ev.target.checked }));
     alertsOnlyMainLine?.addEventListener("change", (ev) => this._emitConfig({ alerts_only_main_line: ev.target.checked }));
     alertsMax?.addEventListener("input", (ev) => this._emitConfig({ alerts_max: Number(ev.target.value) || 3 }));
+    lineFilter?.addEventListener("input", (ev) => this._emitConfig({ line_filter: ev.target.value }));
     deviceLocationMode?.addEventListener("change", (ev) => this._emitConfig({ device_location_mode: ev.target.checked }));
     deviceLocationTitle?.addEventListener("input", (ev) => this._emitConfig({ device_location_title: ev.target.value }));
     deviceLocationTieMarginM?.addEventListener("input", (ev) => this._emitConfig({ device_location_tie_margin_m: Number(ev.target.value) || 60 }));
