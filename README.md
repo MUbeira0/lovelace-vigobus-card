@@ -49,6 +49,8 @@ If HACS does not add the resource automatically, add:
 
 By default the card shows the `nearest` (home) sensor plus any `sensor.vigobus_*` stop the `vigobus-integration` backend was configured with (its `extra_stops`). If the backend also creates per-device nearest sensors (`nearest_devices` / `auto_nearest_devices`, one per tracked phone or person), those are **not** included in that automatic list — with several devices they'd be a wall of near-identical cards. Instead they get their own "By device" section with a compact tab picker, so you switch between devices instead of scrolling past all of them. Explicitly add a `sensor.vigobus_*` entity to `stops` if you want a specific stop pinned regardless of these defaults.
 
+The card identifies per-device sensors from their `is_device_nearest` attribute (`vigobus-integration` v2.3.1+), which works regardless of your Home Assistant language; with an older backend it falls back to guessing from the entity_id (`nearest_<device>`), which can miss stops on some locales.
+
 When a stop has more upcoming buses than fit on one page, a "next/prev" control appears below the list instead of hiding them. Each bus row also shows a small dot: green means the estimate comes from the bus's live GPS position, gray means it's a schedule-only projection (the vehicle hasn't reported a position yet) — hover it for the label.
 
 ## "My location" mode (per-viewer nearest stop)

@@ -414,19 +414,31 @@ function normalizeConfiguredStops(configStops) {
   return stops;
 }
 
-function isPerDeviceNearestKey(key) {
+function isPerDeviceNearestGroup(group) {
   // The integration auto-creates one "nearest_<slugified entity id>" sensor
   // set per tracked person/device_tracker (nearest_devices /
   // auto_nearest_devices). There can be many of these and they're personal,
   // not shared dashboard stops, so they're excluded from the automatic list
-  // below. The classic home-based "nearest" key is untouched.
+  // below (and grouped separately when explicitly added — see
+  // _renderDeviceGroupsSection). The classic home-based "nearest" key is
+  // untouched.
+  //
+  // The backend exposes this explicitly via the is_device_nearest attribute
+  // (integration v2.3.1+); fall back to the "nearest_" key prefix for older
+  // backend versions, though that's derived from the (localized) entity_id
+  // and is a weaker signal.
+  const attrFlag = group?.entity?.attributes?.is_device_nearest;
+  if (typeof attrFlag === "boolean") {
+    return attrFlag;
+  }
+  const key = group?.key;
   return typeof key === "string" && key !== "nearest" && key.startsWith("nearest_");
 }
 
 function buildSelectedGroups(hass, config) {
   const allGroups = buildStopGroups(hass);
   const configuredStops = normalizeConfiguredStops(config?.stops);
-  const withoutDeviceNearest = () => allGroups.filter((group) => !isPerDeviceNearestKey(group.key));
+  const withoutDeviceNearest = () => allGroups.filter((group) => !isPerDeviceNearestGroup(group));
 
   if (!configuredStops.length) {
     return uniqueByKey(withoutDeviceNearest());
@@ -1360,8 +1372,8 @@ class VigoBusCard extends HTMLElement {
     const nextBusCount = Math.max(1, Number(this._config.next_buses_count) || 3);
 
     const secondaryGroups = groups.filter((group) => group.key !== primaryGroup?.key);
-    const deviceGroups = secondaryGroups.filter((group) => isPerDeviceNearestKey(group.key));
-    const regularSecondaryGroups = secondaryGroups.filter((group) => !isPerDeviceNearestKey(group.key));
+    const deviceGroups = secondaryGroups.filter((group) => isPerDeviceNearestGroup(group));
+    const regularSecondaryGroups = secondaryGroups.filter((group) => !isPerDeviceNearestGroup(group));
     const visibleSecondary = this._config.show_all_stops ? regularSecondaryGroups.slice(0, maxStops) : [];
 
     const statusShort = mainMinutes === null ? t(locale, "no_estimations") : formatShortDuration(mainMinutes);
