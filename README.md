@@ -10,18 +10,16 @@ Dashboard card for Home Assistant that displays VigoBus and Vitrasa arrival time
 
 ## Features
 
-- Main stop hero layout
-- Secondary stops with matching style — the home `nearest` stop and any manually configured extra stops show automatically; per-device nearest sensors (one per tracked phone/person) are grouped separately instead of cluttering this list (see below)
-- Per-device nearest stops shown as a compact tab picker instead of one card per device, when you have several
-- Each upcoming bus is marked as live (GPS-tracked) or scheduled (timetable only), the same distinction apps like Moovit show
+- Bold, transit-app-inspired look: each bus line gets its own color-coded badge (auto-assigned from a fixed, colorblind-checked palette, no configuration needed), with a matching accent border on its row
+- Main stop hero layout, sized to stay in proportion with the rest of the card instead of dominating it
+- Secondary stops with matching style — the home `nearest` stop and any manually configured extra stops show automatically; per-device nearest sensors (one per tracked phone/person) are excluded from this automatic list (see "My location" below for the per-viewer alternative)
+- Each upcoming bus is marked live (GPS-tracked) or scheduled (timetable only) with a small pill, the same distinction apps like Moovit show
 - Route-aware upcoming buses, with pagination when a stop has more than a page of buses
 - Optional line filter (global or per stop) to only show arrivals for one bus line
-- Multiple route variants shown per line when available
 - Alerts per active line
 - Spanish, English, and Galician UI
 - Compact mode and card editor
 - Follows your Home Assistant light/dark theme instead of a fixed dark look
-- Refreshed visual polish: an accent-colored edge on the main stop, a soft pulsing dot on live buses, tabular numerals so the countdown doesn't jitter, and hover/press feedback on every clickable pill and button
 
 ## Installation with HACS
 
@@ -48,11 +46,11 @@ If HACS does not add the resource automatically, add:
 - `line_filter`: Only show buses for this line (e.g. `C1`) everywhere on the card, unless a stop overrides it
 - `stops`: each entry accepts `entity`, `title`, and an optional `line` that overrides `line_filter` for that stop only
 
-By default the card shows the `nearest` (home) sensor plus any `sensor.vigobus_*` stop the `vigobus-integration` backend was configured with (its `extra_stops`). If the backend also creates per-device nearest sensors (`nearest_devices` / `auto_nearest_devices`, one per tracked phone or person), those are **not** included in that automatic list — with several devices they'd be a wall of near-identical cards. Instead they get their own "By device" section with a compact tab picker, so you switch between devices instead of scrolling past all of them. Explicitly add a `sensor.vigobus_*` entity to `stops` if you want a specific stop pinned regardless of these defaults.
+By default the card shows the `nearest` (home) sensor plus any `sensor.vigobus_*` stop the `vigobus-integration` backend was configured with (its `extra_stops`). If the backend also creates per-device nearest sensors (`nearest_devices` / `auto_nearest_devices`, one per tracked phone or person), those are **not** included in that automatic list — the per-viewer "My location" mode below is the intended way to show someone their own nearest stop, without a manual switcher. Explicitly add a `sensor.vigobus_*` entity to `stops` if you want a specific device sensor pinned on the dashboard regardless of these defaults.
 
 The card identifies per-device sensors from their `is_device_nearest` attribute (`vigobus-integration` v2.3.1+), which works regardless of your Home Assistant language; with an older backend it falls back to guessing from the entity_id (`nearest_<device>`), which can miss stops on some locales.
 
-When a stop has more upcoming buses than fit on one page, a "next/prev" control appears below the list instead of hiding them. Each bus row also shows a small dot: green means the estimate comes from the bus's live GPS position, gray means it's a schedule-only projection (the vehicle hasn't reported a position yet) — hover it for the label.
+When a stop has more upcoming buses than fit on one page, a "next/prev" control appears below the list instead of hiding them. Each bus row also shows a small pill: green **"En vivo"/"Live"** means the estimate comes from the bus's live GPS position, gray **"Horario"/"Scheduled"** means it's a schedule-only projection (the vehicle hasn't reported a position yet).
 
 ## "My location" mode (per-viewer nearest stop)
 
@@ -61,20 +59,23 @@ a single shared Home Assistant state, the same for anyone looking at the
 dashboard. Set `device_location_mode: true` to add an extra section that
 instead asks **each viewing device's own browser/app** for its live GPS
 location and shows the stop(s) closest to *that* device — a phone and a
-tablet looking at the same dashboard can see different stops. It requires
-the `vigobus-integration` backend (v2.1.0+) for the stateless
-`vigobus.nearest_stops` service, and the browser/app must grant the page
-location permission.
+tablet looking at the same dashboard can see different stops, automatically,
+with no picker to tap. It requires the `vigobus-integration` backend
+(v2.1.0+) for the stateless `vigobus.nearest_stops` service, and the
+browser/app must grant the page location permission.
 
 Because the Home Assistant Companion **app** runs inside a WebView where
 `navigator.geolocation` is unreliable, the card falls back to the coordinates
 of the **viewer's `person` entity** (matched by the logged-in user) — the
-location the app already reports to the server. Control this with
+location the app already reports to the server. When that match succeeds,
+the section heads itself with that person's name (e.g. "Miguel · tu
+parada") instead of a generic label. Control the source with
 `device_location_source`:
 
 - `auto` (default): try the browser GPS, fall back to your `person` if it is
   unavailable or denied (works in the app).
-- `browser`: browser GPS only, no fallback.
+- `browser`: browser GPS only, no fallback (no name is shown, since there is
+  no `person` match).
 - `person`: skip the browser and always use your `person` coordinates.
 
 For the `person` fallback to have fresh coordinates, enable *Background
@@ -85,16 +86,17 @@ type: custom:vigobus-card
 title: VigoBus
 device_location_mode: true
 device_location_source: auto # auto | browser | person
-device_location_title: "" # optional, defaults to a translated label
+device_location_title: "" # optional, overrides the auto-generated heading
 device_location_tie_margin_m: 60 # also show stops within this many meters of the closest one
 device_location_max_candidates: 3
 device_location_refresh_seconds: 45
 ```
 
-When more than one stop is within `device_location_tie_margin_m` of the
-closest one, the section shows a row of chips so the viewer can pick which
-one to see — useful when the nearest stop alone is ambiguous (e.g. stops on
-opposite sidewalks).
+Which stop to show is always automatic — there is no picker for *who* it is.
+The one exception: when more than one stop is within
+`device_location_tie_margin_m` of the closest one for that person, a row of
+chips lets them pick *which stop* to see, since the nearest stop alone is
+genuinely ambiguous (e.g. stops on opposite sidewalks).
 
 ## Troubleshooting
 
