@@ -651,6 +651,7 @@ function getBusesFromGroup(group, lineFilter) {
       ruta: item.ruta || "-",
       minutos: parseMinutes(item.minutos),
       metros: item.metros,
+      color: item.color || null,
     }))
     .filter((item) => item.minutos !== null)
     .filter((item) => !target || normalizeLine(item.linea) === target);
@@ -696,7 +697,16 @@ const LINE_COLORS = [
   "#e34948", // red
 ];
 
-function getLineColor(line) {
+function getLineColor(line, officialColor) {
+  // Prefer Vitrasa's own published color for the line (integration
+  // v2.5.0+, sourced from their public line-geometry data) so the badge
+  // matches the real livery; only fall back to a synthetic hash-based
+  // color for lines the backend doesn't know a color for, or an older
+  // backend that doesn't send one yet.
+  if (typeof officialColor === "string" && /^#[0-9a-f]{6}$/i.test(officialColor.trim())) {
+    return officialColor.trim();
+  }
+
   const text = String(line || "").trim().toUpperCase();
   if (!text) {
     return LINE_COLORS[0];
@@ -1194,7 +1204,7 @@ class VigoBusCard extends HTMLElement {
           ${totalPages > 1 ? `<span class="page-indicator">${page + 1}/${totalPages}</span>` : ""}
         </div>
         ${pageItems.map((bus) => {
-          const color = getLineColor(bus.linea);
+          const color = getLineColor(bus.linea, bus.color);
           const textColor = getContrastTextColor(color);
           const live = isLiveBus(bus);
           return `
@@ -1365,7 +1375,7 @@ class VigoBusCard extends HTMLElement {
     const statusShort = mainMinutes === null ? t(locale, "no_estimations") : formatShortDuration(mainMinutes);
     const accent = this._config.accent_color || "#ff6b35";
     const mainAllBuses = getBusesFromGroup(primaryGroup, mainLineFilter);
-    const mainLineColor = getLineColor(mainLine);
+    const mainLineColor = getLineColor(mainLine, mainAllBuses[0]?.color);
     const mainLineTextColor = getContrastTextColor(mainLineColor);
     const mainTitle = getDisplayTitle(primaryGroup, t(locale, "selected_stops"));
     const stale = isGroupStale(primaryGroup);
@@ -1405,9 +1415,12 @@ class VigoBusCard extends HTMLElement {
           --vigobus-veil-strong: color-mix(in srgb, var(--vigobus-text) 16%, transparent);
           /* Accent-tinted panel, mixed against the card's own background so
              it stays readable and theme-correct in both light and dark. */
-          --vigobus-accent-tint: color-mix(in srgb, var(--vigobus-accent) 12%, var(--vigobus-bg));
-          --vigobus-accent-tint-strong: color-mix(in srgb, var(--vigobus-accent) 22%, var(--vigobus-bg));
-          --vigobus-accent-border: color-mix(in srgb, var(--vigobus-accent) 32%, var(--vigobus-divider));
+          /* Mixed against the veil (not the raw background) so the tint
+             stays clearly visible in dark mode too — mixing straight into a
+             near-black background barely moves its lightness at all. */
+          --vigobus-accent-tint: color-mix(in srgb, var(--vigobus-accent) 22%, var(--vigobus-veil));
+          --vigobus-accent-tint-strong: color-mix(in srgb, var(--vigobus-accent) 36%, var(--vigobus-veil-strong));
+          --vigobus-accent-border: color-mix(in srgb, var(--vigobus-accent) 45%, var(--vigobus-divider));
           color: var(--vigobus-text);
           font-family: "Poppins", var(--paper-font-body1_-_font-family, var(--ha-font-family, -apple-system, "Segoe UI", sans-serif));
         }
