@@ -1421,7 +1421,7 @@ class VigoBusCard extends HTMLElement {
           overflow: hidden;
           border-radius: 24px;
           background: var(--vigobus-bg);
-          box-shadow: var(--ha-card-box-shadow, 0 10px 26px rgba(0,0,0,0.18));
+          box-shadow: var(--ha-card-box-shadow, 0 10px 26px rgba(0,0,0,0.18)), inset 0 1px 0 var(--vigobus-veil-weak);
           border: 1px solid var(--vigobus-divider);
         }
 
@@ -1487,6 +1487,8 @@ class VigoBusCard extends HTMLElement {
           border-radius: 20px;
           background: linear-gradient(145deg, var(--vigobus-veil), var(--vigobus-veil-weak));
           border: 1px solid var(--vigobus-divider);
+          border-left: 3px solid var(--vigobus-accent);
+          box-shadow: inset 0 1px 0 var(--vigobus-veil-weak);
         }
 
         .hero-top {
@@ -1516,6 +1518,8 @@ class VigoBusCard extends HTMLElement {
           font-size: 36px;
           font-weight: 900;
           line-height: 1;
+          letter-spacing: -0.02em;
+          font-variant-numeric: tabular-nums;
           color: var(--vigobus-text);
           text-align: right;
         }
@@ -1580,6 +1584,16 @@ class VigoBusCard extends HTMLElement {
           border: 1px solid var(--vigobus-divider);
           color: var(--vigobus-text);
           font-size: 12px;
+          transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+        }
+
+        .page-btn:hover:not(:disabled) {
+          background: var(--vigobus-veil);
+          border-color: var(--vigobus-accent);
+        }
+
+        .page-btn:active:not(:disabled) {
+          transform: scale(0.96);
         }
 
         .page-btn:disabled {
@@ -1618,6 +1632,12 @@ class VigoBusCard extends HTMLElement {
         .status-dot.live {
           background: #22c55e;
           box-shadow: 0 0 0 2px color-mix(in srgb, #22c55e 25%, transparent);
+          animation: vigobus-live-pulse 2.2s ease-in-out infinite;
+        }
+
+        @keyframes vigobus-live-pulse {
+          0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, #22c55e 25%, transparent); }
+          50% { box-shadow: 0 0 0 4px color-mix(in srgb, #22c55e 12%, transparent); }
         }
 
         .next-route {
@@ -1724,6 +1744,18 @@ class VigoBusCard extends HTMLElement {
           text-transform: uppercase;
           letter-spacing: 0.08em;
           color: var(--vigobus-muted);
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .section h4::before {
+          content: "";
+          display: inline-block;
+          width: 3px;
+          height: 12px;
+          border-radius: 2px;
+          background: var(--vigobus-accent);
         }
 
         .stop-list {
@@ -1789,6 +1821,15 @@ class VigoBusCard extends HTMLElement {
           border: 1px solid var(--vigobus-divider);
           color: var(--vigobus-text);
           font-size: 12px;
+          transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+        }
+
+        .candidate-pill:hover {
+          border-color: var(--vigobus-accent);
+        }
+
+        .candidate-pill:active {
+          transform: scale(0.96);
         }
 
         .candidate-pill.active {
@@ -1806,6 +1847,7 @@ class VigoBusCard extends HTMLElement {
         .accent-line {
           height: 4px;
           background: linear-gradient(90deg, var(--vigobus-accent), rgba(255,255,255,0));
+          box-shadow: 0 0 12px 0 color-mix(in srgb, var(--vigobus-accent) 55%, transparent);
         }
 
         @media (max-width: 600px) {
