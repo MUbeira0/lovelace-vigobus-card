@@ -72,6 +72,10 @@ const TEXTS = {
     scheduled: "Horario",
     my_location_short: "tu parada",
     tie_break_hint_suffix: "paradas igual de cerca",
+    card_style: "Estilo de tarjeta",
+    card_style_glass: "Cristal clásico",
+    card_style_glass_refined: "Cristal refinado",
+    card_style_bold: "Bus urbano (Transit)",
   },
   en: {
     unknown: "Unknown",
@@ -142,6 +146,10 @@ const TEXTS = {
     scheduled: "Scheduled",
     my_location_short: "your stop",
     tie_break_hint_suffix: "stops equally close",
+    card_style: "Card style",
+    card_style_glass: "Classic glass",
+    card_style_glass_refined: "Refined glass",
+    card_style_bold: "Urban bus (Transit)",
   },
   gl: {
     unknown: "Desco\u00f1ecido",
@@ -212,6 +220,10 @@ const TEXTS = {
     scheduled: "Horario",
     my_location_short: "a t\u00faa parada",
     tie_break_hint_suffix: "paradas igual de preto",
+    card_style: "Estilo de tarxeta",
+    card_style_glass: "Cristal cl\u00e1sico",
+    card_style_glass_refined: "Cristal refinado",
+    card_style_bold: "Bus urbano (Transit)",
   },
 };
 
@@ -733,6 +745,76 @@ function getContrastTextColor(hex) {
   return contrastWithBlack > contrastWithWhite ? "#161616" : "#ffffff";
 }
 
+function formatRouteWithLine(line, route) {
+  const normalizedLine = String(line || "").trim();
+  const normalizedRoute = String(route || "").trim();
+
+  if (!normalizedRoute || normalizedRoute === "-") {
+    return normalizedLine || "-";
+  }
+
+  if (!normalizedLine || normalizedLine === "-") {
+    return normalizedRoute;
+  }
+
+  const linePattern = normalizedLine.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const prefixPattern = new RegExp(`^${linePattern}\s*[-–—:]\s*`, "i");
+  const strippedRoute = normalizedRoute.replace(prefixPattern, "").trim();
+
+  if (!strippedRoute) {
+    return normalizedLine;
+  }
+
+  return `${normalizedLine} - ${strippedRoute}`;
+}
+
+// Three selectable visual styles: "glass" and "glass_refined" preserve the
+// card's two earlier looks (a plain gradient hero, and that same hero with
+// an accent border/pulse/hover polish added later) so nobody loses the look
+// they picked before; "bold" is the current default. Only decoration
+// differs between them — filtering, pagination, per-viewer location, etc.
+// all work the same regardless of style.
+const CARD_STYLES = {
+  glass: {
+    heroLayout: "big",
+    busIndicator: "none",
+    pagination: "pill",
+    lineBadges: false,
+    heroAccentBorder: false,
+    numeralPolish: false,
+    sectionTick: false,
+    accentGlow: false,
+    font: "system",
+  },
+  glass_refined: {
+    heroLayout: "big",
+    busIndicator: "dot",
+    pagination: "pill",
+    lineBadges: false,
+    heroAccentBorder: true,
+    numeralPolish: true,
+    sectionTick: true,
+    accentGlow: true,
+    font: "system",
+  },
+  bold: {
+    heroLayout: "compact",
+    busIndicator: "pill",
+    pagination: "circle",
+    lineBadges: true,
+    heroAccentBorder: false,
+    numeralPolish: true,
+    sectionTick: true,
+    accentGlow: true,
+    font: "poppins",
+  },
+};
+
+function getCardStyle(config) {
+  const key = String(config?.card_style || "bold");
+  return CARD_STYLES[key] ? key : "bold";
+}
+
 function isLiveBus(bus) {
   // Vitrasa's API reports "metros" (remaining distance) only when the bus
   // has an active GPS fix; schedule-only projections (early/late buses with
@@ -788,6 +870,7 @@ class VigoBusCard extends HTMLElement {
       alerts_only_main_line: false,
       alerts_max: 3,
       accent_color: "#ff6b35",
+      card_style: "bold",
       language: "auto",
       line_filter: "",
       device_location_mode: false,
@@ -811,96 +894,8 @@ class VigoBusCard extends HTMLElement {
     };
   }
 
-  static getConfigForm() {
-    const labels = {
-      title: "T\u00edtulo",
-      primary_entity: "Entidad principal",
-      language: "Idioma",
-      next_buses_count: "Nº siguientes",
-      accent_color: "Color acento",
-      compact: "Modo compacto",
-      show_all_stops: "Mostrar otras paradas",
-      show_debug: "Mostrar debug",
-      show_alerts: "Mostrar alertas",
-      alerts_only_main_line: "Solo l\u00ednea principal",
-      alerts_max: "Max avisos",
-      max_stops: "M\u00e1ximo de paradas",
-      stop1_entity: "Parada 1",
-      stop1_title: "T\u00edtulo 1",
-      stop2_entity: "Parada 2",
-      stop2_title: "T\u00edtulo 2",
-      stop3_entity: "Parada 3",
-      stop3_title: "T\u00edtulo 3",
-      stop4_entity: "Parada 4",
-      stop4_title: "T\u00edtulo 4",
-      stop5_entity: "Parada 5",
-      stop5_title: "T\u00edtulo 5",
-      stop6_entity: "Parada 6",
-      stop6_title: "T\u00edtulo 6",
-    };
-
-    const helpers = {
-      primary_entity: "Se usa si quieres forzar una parada principal concreta.",
-      stop1_entity: "Entidad sensor.vigobus_* que quieras mostrar.",
-      stop2_entity: "Entidad sensor.vigobus_* que quieras mostrar.",
-      stop3_entity: "Entidad sensor.vigobus_* que quieras mostrar.",
-      stop4_entity: "Entidad sensor.vigobus_* que quieras mostrar.",
-      stop5_entity: "Entidad sensor.vigobus_* que quieras mostrar.",
-      stop6_entity: "Entidad sensor.vigobus_* que quieras mostrar.",
-      language: "Auto usa el idioma de Home Assistant.",
-      next_buses_count: "Cu\u00e1ntos pr\u00f3ximos buses se muestran por parada.",
-      max_stops: "M\u00e1ximo de paradas secundarias visibles.",
-      show_alerts: "Mostrar bloque de avisos por l\u00ednea en la tarjeta.",
-      alerts_only_main_line: "Filtra avisos solo para la l\u00ednea principal actual.",
-      alerts_max: "M\u00e1ximo de avisos a mostrar.",
-    };
-
-    const schema = [
-      { name: "title", selector: { text: {} } },
-      {
-        name: "language",
-        selector: {
-          select: {
-            options: [
-              { label: "Auto", value: "auto" },
-              { label: "Espa\u00f1ol", value: "es" },
-              { label: "Galego", value: "gl" },
-              { label: "English", value: "en" },
-            ],
-          },
-        },
-      },
-      { name: "accent_color", selector: { text: {} } },
-      { name: "primary_entity", selector: { entity: {} } },
-      { name: "next_buses_count", selector: { number: { min: 1, max: 6, mode: "box" } } },
-      { name: "max_stops", selector: { number: { min: 1, max: 6, mode: "box" } } },
-      { name: "compact", selector: { boolean: {} } },
-      { name: "show_all_stops", selector: { boolean: {} } },
-      { name: "show_debug", selector: { boolean: {} } },
-      { name: "show_alerts", selector: { boolean: {} } },
-      { name: "alerts_only_main_line", selector: { boolean: {} } },
-      { name: "alerts_max", selector: { number: { min: 1, max: 10, mode: "box" } } },
-      { type: "expandable", name: "stops", title: "Paradas seleccionadas", schema: [
-        { name: "stop1_entity", selector: { entity: {} } },
-        { name: "stop1_title", selector: { text: {} } },
-        { name: "stop2_entity", selector: { entity: {} } },
-        { name: "stop2_title", selector: { text: {} } },
-        { name: "stop3_entity", selector: { entity: {} } },
-        { name: "stop3_title", selector: { text: {} } },
-        { name: "stop4_entity", selector: { entity: {} } },
-        { name: "stop4_title", selector: { text: {} } },
-        { name: "stop5_entity", selector: { entity: {} } },
-        { name: "stop5_title", selector: { text: {} } },
-        { name: "stop6_entity", selector: { entity: {} } },
-        { name: "stop6_title", selector: { text: {} } },
-      ] },
-    ];
-
-    return {
-      schema,
-      computeLabel: (field) => labels[field.name],
-      computeHelper: (field) => helpers[field.name],
-    };
+  static getConfigElement() {
+    return document.createElement("vigobus-card-editor");
   }
 
   constructor() {
@@ -917,6 +912,7 @@ class VigoBusCard extends HTMLElement {
       alerts_only_main_line: false,
       alerts_max: 3,
       accent_color: "#ff6b35",
+      card_style: "bold",
       language: "auto",
       line_filter: "",
       device_location_mode: false,
@@ -944,6 +940,9 @@ class VigoBusCard extends HTMLElement {
       max_stops: Number(config.max_stops ?? this._config.max_stops ?? 6),
       next_buses_count: Number(config.next_buses_count ?? this._config.next_buses_count ?? 3),
       alerts_max: Number(config.alerts_max ?? this._config.alerts_max ?? 3),
+      card_style: CARD_STYLES[config.card_style ?? this._config.card_style]
+        ? config.card_style ?? this._config.card_style
+        : "bold",
       device_location_mode: Boolean(config.device_location_mode ?? this._config.device_location_mode ?? false),
       device_location_tie_margin_m: Number(
         config.device_location_tie_margin_m ?? this._config.device_location_tie_margin_m ?? 60
@@ -1186,7 +1185,8 @@ class VigoBusCard extends HTMLElement {
     this._render();
   }
 
-  _renderBusList(key, allBuses, pageSize, locale) {
+  _renderBusList(key, allBuses, pageSize, locale, styleKey) {
+    const style = CARD_STYLES[styleKey] || CARD_STYLES.bold;
     const buses = Array.isArray(allBuses) ? allBuses : [];
     const size = Math.max(1, Number(pageSize) || 3);
     const totalPages = Math.max(1, Math.ceil(buses.length / size));
@@ -1197,17 +1197,13 @@ class VigoBusCard extends HTMLElement {
       return `<div class="next-list"><div class="meta" style="font-size:12px;">${escapeHtml(t(locale, "no_upcoming"))}</div></div>`;
     }
 
-    return `
-      <div class="next-list">
-        <div class="next-list-head">
-          <span class="next-list-title">${escapeHtml(t(locale, "following"))}</span>
-          ${totalPages > 1 ? `<span class="page-indicator">${page + 1}/${totalPages}</span>` : ""}
-        </div>
-        ${pageItems.map((bus) => {
-          const color = getLineColor(bus.linea, bus.color);
-          const textColor = getContrastTextColor(color);
-          const live = isLiveBus(bus);
-          return `
+    const rowsHtml = pageItems.map((bus) => {
+      const live = isLiveBus(bus);
+
+      if (style.lineBadges) {
+        const color = getLineColor(bus.linea, bus.color);
+        const textColor = getContrastTextColor(color);
+        return `
           <div class="next-item" style="border-left-color: ${color};">
             <span class="line-badge" style="background: ${color}; color: ${textColor};">${escapeHtml(bus.linea || "-")}</span>
             <span class="next-route">${escapeHtml(String(bus.ruta || "-").trim())}</span>
@@ -1215,32 +1211,51 @@ class VigoBusCard extends HTMLElement {
             <span class="next-minutes">${escapeHtml(formatShortDuration(bus.minutos))}</span>
           </div>
         `;
-        }).join("")}
-        ${totalPages > 1 ? `
+      }
+
+      const indicator = style.busIndicator === "dot"
+        ? `<span class="status-dot ${live ? "live" : "scheduled"}" title="${escapeHtml(live ? t(locale, "live") : t(locale, "scheduled"))}"></span>`
+        : "";
+
+      return `
+        <div class="next-item next-item--legacy">
+          <strong>${indicator}${escapeHtml(bus.linea || "-")}</strong>
+          <span class="next-minutes">${escapeHtml(formatShortDuration(bus.minutos))}</span>
+          <span class="next-route">${escapeHtml(formatRouteWithLine(bus.linea, bus.ruta))}</span>
+        </div>
+      `;
+    }).join("");
+
+    const pagination = totalPages <= 1 ? "" : (
+      style.pagination === "circle"
+        ? `
           <div class="page-controls">
-            <button
-              class="page-btn"
-              type="button"
-              aria-label="${escapeHtml(t(locale, "prev"))}"
-              data-page-key="${escapeHtml(key)}"
-              data-page-dir="-1"
-              ${page <= 0 ? "disabled" : ""}
-            >‹</button>
-            <button
-              class="page-btn"
-              type="button"
-              aria-label="${escapeHtml(t(locale, "next"))}"
-              data-page-key="${escapeHtml(key)}"
-              data-page-dir="1"
-              ${page >= totalPages - 1 ? "disabled" : ""}
-            >›</button>
+            <button class="page-btn" type="button" aria-label="${escapeHtml(t(locale, "prev"))}" data-page-key="${escapeHtml(key)}" data-page-dir="-1" ${page <= 0 ? "disabled" : ""}>‹</button>
+            <button class="page-btn" type="button" aria-label="${escapeHtml(t(locale, "next"))}" data-page-key="${escapeHtml(key)}" data-page-dir="1" ${page >= totalPages - 1 ? "disabled" : ""}>›</button>
           </div>
-        ` : ""}
+        `
+        : `
+          <div class="page-controls">
+            <button class="page-btn page-btn--pill" type="button" data-page-key="${escapeHtml(key)}" data-page-dir="-1" ${page <= 0 ? "disabled" : ""}>‹ ${escapeHtml(t(locale, "prev"))}</button>
+            <button class="page-btn page-btn--pill" type="button" data-page-key="${escapeHtml(key)}" data-page-dir="1" ${page >= totalPages - 1 ? "disabled" : ""}>${escapeHtml(t(locale, "next"))} ›</button>
+          </div>
+        `
+    );
+
+    return `
+      <div class="next-list">
+        <div class="next-list-head">
+          <span class="next-list-title">${escapeHtml(t(locale, "following"))}</span>
+          ${totalPages > 1 ? `<span class="page-indicator">${page + 1}/${totalPages}</span>` : ""}
+        </div>
+        ${rowsHtml}
+        ${pagination}
       </div>
     `;
   }
 
-  _renderStopItem(group, locale, nextBusCount) {
+  _renderStopItem(group, locale, nextBusCount, styleKey) {
+    const style = CARD_STYLES[styleKey] || CARD_STYLES.bold;
     const lineFilter = resolveLineFilter(group, this._config);
     const line = getLineFromGroup(group, lineFilter);
     const distance = getDistanceFromGroup(group);
@@ -1253,14 +1268,38 @@ class VigoBusCard extends HTMLElement {
       this._config.alerts_max
     );
 
-    return `
-      <div class="stop-item">
+    const header = style.heroLayout === "big"
+      ? (() => {
+          const minutes = getMinutesForGroup(group, lineFilter);
+          const routeEntries = getRouteEntriesFromGroup(group, lineFilter);
+          const route = routeEntries.map((item) => formatRouteWithLine(item.line || line, item.route)).join(" | ");
+          const routeLabel = routeEntries.length > 1 ? t(locale, "routes") : t(locale, "route");
+          return `
+            <div class="hero-top">
+              <div>
+                <div class="stop-name">${escapeHtml(group.title)}</div>
+                <div class="meta">${escapeHtml(t(locale, "line"))}: <b>${escapeHtml(line)}</b><br>${escapeHtml(routeLabel)}: <b>${escapeHtml(route)}</b></div>
+              </div>
+              <div class="main-time">${minutes === null ? escapeHtml(t(locale, "unavailable")) : escapeHtml(formatShortDuration(minutes))}</div>
+            </div>
+            <div class="mini-pill-row">
+              <div class="pill">${allStopBuses.length} ${escapeHtml(allStopBuses.length === 1 ? t(locale, "bus") : t(locale, "buses"))}</div>
+              ${this._config.show_alerts ? `<div class="pill">${filteredAlerts.length} ${escapeHtml(t(locale, "alerts"))}</div>` : ""}
+            </div>
+          `;
+        })()
+      : `
         <div class="hero-top">
           <div class="stop-name">${escapeHtml(group.title)}</div>
           ${distance !== null ? `<span class="pill">${distance.toFixed(0)} m</span>` : ""}
         </div>
+      `;
 
-        ${this._renderBusList(`stop:${group.key}`, allStopBuses, nextBusCount, locale)}
+    return `
+      <div class="stop-item">
+        ${header}
+
+        ${this._renderBusList(`stop:${group.key}`, allStopBuses, nextBusCount, locale, styleKey)}
 
         ${this._config.show_alerts
           ? (filteredAlerts.length
@@ -1280,7 +1319,7 @@ class VigoBusCard extends HTMLElement {
     `;
   }
 
-  _renderDeviceLocationSection(locale) {
+  _renderDeviceLocationSection(locale, styleKey) {
     const state = this._deviceLocationState || { status: "locating", candidates: [], selectedId: null };
     const customTitle = String(this._config.device_location_title || "").trim();
     const genericTitle = customTitle || t(locale, "my_location");
@@ -1337,7 +1376,7 @@ class VigoBusCard extends HTMLElement {
             <div class="stop-name">${escapeHtml(selected?.name || "-")}</div>
             <span class="pill">${Number(selected?.distance_m || 0).toFixed(0)} m</span>
           </div>
-          ${this._renderBusList(`device:${selected?.id}`, buses, nextBusCount, locale)}
+          ${this._renderBusList(`device:${selected?.id}`, buses, nextBusCount, locale, styleKey)}
         </div>
       `;
     }
@@ -1364,6 +1403,8 @@ class VigoBusCard extends HTMLElement {
     const mainLine = getLineFromGroup(primaryGroup, mainLineFilter);
     const mainRouteEntries = getRouteEntriesFromGroup(primaryGroup, mainLineFilter);
     const mainRoute = mainRouteEntries[0]?.route || "-";
+    const mainRouteFull = mainRouteEntries.map((item) => formatRouteWithLine(item.line || mainLine, item.route)).join(" | ");
+    const mainRouteLabel = mainRouteEntries.length > 1 ? t(locale, "routes") : t(locale, "route");
     const mainDistance = getDistanceFromGroup(primaryGroup);
     const updatedAt = getUpdatedAtFromGroup(primaryGroup);
     const maxStops = Math.max(1, Number(this._config.max_stops) || 6);
@@ -1374,6 +1415,8 @@ class VigoBusCard extends HTMLElement {
 
     const statusShort = mainMinutes === null ? t(locale, "no_estimations") : formatShortDuration(mainMinutes);
     const accent = this._config.accent_color || "#ff6b35";
+    const styleKey = getCardStyle(this._config);
+    const style = CARD_STYLES[styleKey];
     const mainAllBuses = getBusesFromGroup(primaryGroup, mainLineFilter);
     const mainLineColor = getLineColor(mainLine, mainAllBuses[0]?.color);
     const mainLineTextColor = getContrastTextColor(mainLineColor);
@@ -1891,6 +1934,62 @@ class VigoBusCard extends HTMLElement {
           padding: 0 2px 8px;
         }
 
+        .mini-pill-row {
+          margin-top: 8px;
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .next-item--legacy {
+          display: grid;
+          grid-template-columns: auto auto minmax(0, 1fr);
+          align-items: center;
+          gap: 10px;
+          border-left: none;
+        }
+
+        .status-dot {
+          display: inline-block;
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          margin-right: 6px;
+          background: var(--vigobus-muted);
+          vertical-align: middle;
+        }
+
+        .status-dot.live {
+          background: #16a34a;
+          animation: vigobus-live-pulse 2.2s ease-in-out infinite;
+        }
+
+        .page-btn--pill {
+          width: auto;
+          height: auto;
+          padding: 6px 12px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 700;
+        }
+
+        ha-card[data-style="glass"] .accent-line {
+          box-shadow: none;
+        }
+
+        ha-card[data-style="glass"] .section h4::before {
+          display: none;
+        }
+
+        ha-card[data-style="glass_refined"] .hero {
+          border-left: 3px solid var(--vigobus-accent);
+        }
+
+        ha-card[data-style="glass"],
+        ha-card[data-style="glass_refined"] {
+          font-family: var(--paper-font-body1_-_font-family, var(--ha-font-family, -apple-system, "Segoe UI", sans-serif));
+        }
+
         @media (max-width: 600px) {
           .header {
             padding: 14px 14px 8px;
@@ -1926,7 +2025,7 @@ class VigoBusCard extends HTMLElement {
         }
       </style>
 
-      <ha-card class="${compact ? "compact" : ""}">
+      <ha-card class="${compact ? "compact" : ""}" data-style="${styleKey}">
         <div class="accent-line"></div>
         <div class="header">
           <div class="title">
@@ -1938,27 +2037,47 @@ class VigoBusCard extends HTMLElement {
 
         ${primaryGroup ? `
           <div class="hero">
-            <div class="hero-top">
-              <div class="stop-name">${escapeHtml(mainTitle)}</div>
-              ${mainDistance !== null ? `<span class="pill">${mainDistance.toFixed(0)} m</span>` : ""}
-            </div>
-            <div class="hero-line-row">
-              <div class="hero-line-info">
-                <span class="line-badge" style="background: ${mainLineColor}; color: ${mainLineTextColor};">${escapeHtml(mainLine)}</span>
-                <span class="next-route">${escapeHtml(mainRoute)}</span>
+            ${style.heroLayout === "big" ? `
+              <div class="hero-top">
+                <div>
+                  <div class="stop-name">${escapeHtml(mainTitle)}</div>
+                  <div class="meta">${escapeHtml(t(locale, "line"))}: <b>${escapeHtml(mainLine)}</b><br>${escapeHtml(mainRouteLabel)}: <b>${escapeHtml(mainRouteFull)}</b>${mainDistance !== null ? `<br>${escapeHtml(t(locale, "distance"))}: <b>${mainDistance.toFixed(0)} m</b>` : ""}</div>
+                </div>
+                <div class="main-time">
+                  ${escapeHtml(statusShort)}
+                  <small>${escapeHtml(t(locale, "arrival"))}</small>
+                </div>
               </div>
-              <div class="main-time">
-                ${escapeHtml(statusShort)}
-                <small>${escapeHtml(t(locale, "arrival"))}</small>
-              </div>
-            </div>
-            ${stale || primaryGroup.entity?.state === "unknown" ? `
               <div class="pill-row">
+                <div class="pill">${escapeHtml(primaryGroup.key === "nearest" ? t(locale, "nearest") : t(locale, "main_stop"))}</div>
+                <div class="pill">${mainAllBuses.length} ${escapeHtml(mainAllBuses.length === 1 ? t(locale, "bus") : t(locale, "buses"))}</div>
+                ${this._config.show_alerts ? `<div class="pill">${escapeHtml(visibleAlerts.length)} ${escapeHtml(t(locale, "alerts"))}</div>` : ""}
                 ${stale ? `<div class="pill">${escapeHtml(t(locale, "stale"))}</div><div class="pill">${escapeHtml(t(locale, "offline"))}</div>` : ""}
                 ${primaryGroup.entity?.state === "unknown" ? `<div class="pill">${escapeHtml(t(locale, "no_data"))}</div>` : ""}
               </div>
-            ` : ""}
-            ${this._renderBusList(`stop:${primaryGroup.key}`, mainAllBuses, nextBusCount, locale)}
+            ` : `
+              <div class="hero-top">
+                <div class="stop-name">${escapeHtml(mainTitle)}</div>
+                ${mainDistance !== null ? `<span class="pill">${mainDistance.toFixed(0)} m</span>` : ""}
+              </div>
+              <div class="hero-line-row">
+                <div class="hero-line-info">
+                  <span class="line-badge" style="background: ${mainLineColor}; color: ${mainLineTextColor};">${escapeHtml(mainLine)}</span>
+                  <span class="next-route">${escapeHtml(mainRoute)}</span>
+                </div>
+                <div class="main-time">
+                  ${escapeHtml(statusShort)}
+                  <small>${escapeHtml(t(locale, "arrival"))}</small>
+                </div>
+              </div>
+              ${stale || primaryGroup.entity?.state === "unknown" ? `
+                <div class="pill-row">
+                  ${stale ? `<div class="pill">${escapeHtml(t(locale, "stale"))}</div><div class="pill">${escapeHtml(t(locale, "offline"))}</div>` : ""}
+                  ${primaryGroup.entity?.state === "unknown" ? `<div class="pill">${escapeHtml(t(locale, "no_data"))}</div>` : ""}
+                </div>
+              ` : ""}
+            `}
+            ${this._renderBusList(`stop:${primaryGroup.key}`, mainAllBuses, nextBusCount, locale, styleKey)}
 
             ${this._config.show_alerts ? `<div class="next-list">
               <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 4px;">${escapeHtml(t(locale, "alerts"))}</div>
@@ -1979,12 +2098,12 @@ class VigoBusCard extends HTMLElement {
           <div class="section">
             <h4>${escapeHtml(t(locale, "other_stops"))}</h4>
             <div class="stop-list">
-              ${visibleSecondary.map((group) => this._renderStopItem(group, locale, nextBusCount)).join("")}
+              ${visibleSecondary.map((group) => this._renderStopItem(group, locale, nextBusCount, styleKey)).join("")}
             </div>
           </div>
         ` : ""}
 
-        ${this._config.device_location_mode ? this._renderDeviceLocationSection(locale) : ""}
+        ${this._config.device_location_mode ? this._renderDeviceLocationSection(locale, styleKey) : ""}
 
         ${this._config.show_debug && primaryGroup ? `
           <div class="debug">
@@ -2044,6 +2163,7 @@ class VigoBusCardEditor extends HTMLElement {
       alerts_only_main_line: false,
       alerts_max: 3,
       accent_color: "#ff6b35",
+      card_style: "bold",
       language: "auto",
       line_filter: "",
       device_location_mode: false,
@@ -2196,6 +2316,14 @@ class VigoBusCardEditor extends HTMLElement {
             id="accent_color"
             label="Color acento"
           ></ha-textfield>
+          <label style="display:grid; gap:6px;">
+            <span class="small-hint">${escapeHtml(t(locale, "card_style"))}</span>
+            <select id="card_style" style="padding: 10px 12px; border-radius: 12px; background: var(--card-background-color); color: var(--primary-text-color); border: 1px solid var(--divider-color);">
+              <option value="glass">${escapeHtml(t(locale, "card_style_glass"))}</option>
+              <option value="glass_refined">${escapeHtml(t(locale, "card_style_glass_refined"))}</option>
+              <option value="bold">${escapeHtml(t(locale, "card_style_bold"))}</option>
+            </select>
+          </label>
           <div class="grid2">
             <label style="display:grid; gap:6px;">
               <span class="small-hint">${escapeHtml(t(locale, "language"))}</span>
@@ -2341,6 +2469,7 @@ class VigoBusCardEditor extends HTMLElement {
     const title = this.shadowRoot.getElementById("title");
     const accentColor = this.shadowRoot.getElementById("accent_color");
     const language = this.shadowRoot.getElementById("language");
+    const cardStyle = this.shadowRoot.getElementById("card_style");
     const primaryEntity = this.shadowRoot.getElementById("primary_entity");
     const maxStops = this.shadowRoot.getElementById("max_stops");
     const nextBusesCount = this.shadowRoot.getElementById("next_buses_count");
@@ -2368,6 +2497,9 @@ class VigoBusCardEditor extends HTMLElement {
     }
     if (language) {
       language.value = config.language || "auto";
+    }
+    if (cardStyle) {
+      cardStyle.value = CARD_STYLES[config.card_style] ? config.card_style : "bold";
     }
     if (primaryEntity) {
       primaryEntity.hass = this._hass;
@@ -2472,6 +2604,7 @@ class VigoBusCardEditor extends HTMLElement {
     title?.addEventListener("input", (ev) => this._emitConfig({ title: ev.target.value }));
     accentColor?.addEventListener("input", (ev) => this._emitConfig({ accent_color: ev.target.value }));
     language?.addEventListener("change", (ev) => this._emitConfig({ language: ev.target.value }));
+    cardStyle?.addEventListener("change", (ev) => this._emitConfig({ card_style: ev.target.value }));
     primaryEntity?.addEventListener("value-changed", (ev) => this._emitConfig({ primary_entity: ev.detail.value }));
     maxStops?.addEventListener("input", (ev) => this._emitConfig({ max_stops: Number(ev.target.value) || 6 }));
     nextBusesCount?.addEventListener("input", (ev) => this._emitConfig({ next_buses_count: Number(ev.target.value) || 3 }));

@@ -10,7 +10,8 @@ Dashboard card for Home Assistant that displays VigoBus and Vitrasa arrival time
 
 ## Features
 
-- Bold, transit-app-inspired look: each bus line gets its own color-coded badge (auto-assigned from a fixed, colorblind-checked palette, no configuration needed), with a matching accent border on its row
+- Three selectable visual styles (`card_style`): classic gradient glass, refined glass, and a bold transit-app look — pick whichever fits your dashboard from the card editor, no YAML needed
+- Bold, transit-app-inspired look: each bus line gets its own color-coded badge (using Vitrasa's own official line color when published, falling back to a fixed colorblind-checked palette), with a matching accent border on its row
 - Main stop hero layout, sized to stay in proportion with the rest of the card instead of dominating it
 - Secondary stops with matching style — the home `nearest` stop and any manually configured extra stops show automatically; per-device nearest sensors (one per tracked phone/person) are excluded from this automatic list (see "My location" below for the per-viewer alternative)
 - Each upcoming bus is marked live (GPS-tracked) or scheduled (timetable only) with a small pill, the same distinction apps like Moovit show
@@ -39,9 +40,20 @@ If HACS does not add the resource automatically, add:
 
 ## Configuration options
 
+Everything below is editable from the card's visual editor (click "Edit" on
+the card in a dashboard) — you don't need to write YAML for any of it. The
+YAML form is shown here just as reference.
+
 - `title`: Card title
+- `card_style`: `glass` (classic gradient hero), `glass_refined` (glass with live-pulse dots and accent border), or `bold` (transit badges, default)
+- `accent_color`: Accent color used for the hero gradient, pills, and highlights
+- `language`: `auto` (follows Home Assistant), `es`, `en`, or `gl`
+- `next_buses_count`: How many upcoming buses to show per page before pagination kicks in
 - `show_alerts`: Show active service alerts
+- `alerts_only_main_line`: Restrict alerts to the main stop's current line
+- `alerts_max`: Maximum number of alerts to show per stop
 - `show_all_stops`: Show main stop plus extra configured stops
+- `max_stops`: Maximum number of secondary stops to show
 - `compact`: Use compact mode for tighter dashboards
 - `line_filter`: Only show buses for this line (e.g. `C1`) everywhere on the card, unless a stop overrides it
 - `stops`: each entry accepts `entity`, `title`, and an optional `line` that overrides `line_filter` for that stop only
@@ -62,7 +74,9 @@ location and shows the stop(s) closest to *that* device — a phone and a
 tablet looking at the same dashboard can see different stops, automatically,
 with no picker to tap. It requires the `vigobus-integration` backend
 (v2.1.0+) for the stateless `vigobus.nearest_stops` service, and the
-browser/app must grant the page location permission.
+browser/app must grant the page location permission. All of this section's
+options are in the card's visual editor, under "Mi ubicación" — the YAML
+below is only shown for reference.
 
 Because the Home Assistant Companion **app** runs inside a WebView where
 `navigator.geolocation` is unreliable, the card falls back to the coordinates
