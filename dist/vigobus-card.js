@@ -1436,6 +1436,9 @@ class VigoBusCard extends HTMLElement {
 
         :host {
           display: block;
+          max-width: 100%;
+          overflow-x: hidden;
+          box-sizing: border-box;
           /* Derived from Home Assistant's own theme variables so the card
              follows the active light/dark theme instead of forcing one
              look. The literal fallbacks only apply on very old HA frontends
@@ -1538,6 +1541,8 @@ class VigoBusCard extends HTMLElement {
           border-radius: 16px;
           background: linear-gradient(135deg, var(--vigobus-accent-tint), var(--vigobus-bg));
           border: 1.5px solid var(--vigobus-accent-border);
+          box-sizing: border-box;
+          min-width: 0;
         }
 
         .hero-top {
@@ -1575,6 +1580,8 @@ class VigoBusCard extends HTMLElement {
           font-size: 15px;
           font-weight: 700;
           margin: 0;
+          min-width: 0;
+          overflow-wrap: anywhere;
         }
 
         .meta {
@@ -1699,6 +1706,8 @@ class VigoBusCard extends HTMLElement {
           border-left: 3px solid var(--vigobus-divider);
           color: var(--vigobus-text);
           font-size: 13px;
+          min-width: 0;
+          box-sizing: border-box;
         }
 
         .next-item strong {
@@ -1864,6 +1873,8 @@ class VigoBusCard extends HTMLElement {
           border: 1px solid var(--vigobus-divider);
           display: grid;
           gap: 10px;
+          min-width: 0;
+          box-sizing: border-box;
         }
 
         .secondary-alerts .next-item strong {
