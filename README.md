@@ -103,7 +103,7 @@ device_location_source: auto # auto | browser | person
 device_location_title: "" # optional, overrides the auto-generated heading
 device_location_tie_margin_m: 60 # also show stops within this many meters of the closest one
 device_location_max_candidates: 3
-device_location_refresh_seconds: 45
+device_location_refresh_seconds: 20 # minimum 10
 ```
 
 Which stop to show is always automatic — there is no picker for *who* it is.
@@ -111,6 +111,13 @@ The one exception: when more than one stop is within
 `device_location_tie_margin_m` of the closest one for that person, a row of
 chips lets them pick *which stop* to see, since the nearest stop alone is
 genuinely ambiguous (e.g. stops on opposite sidewalks).
+
+This mode is intentionally as live as possible: every lookup forces a brand
+new GPS fix instead of letting the browser hand back a stale cached
+position, and it pauses on its own while the dashboard tab/app isn't
+visible — jumping straight to a fresh reading the moment you switch back to
+it — so lowering `device_location_refresh_seconds` doesn't cost battery or
+network while you're not even looking at the screen.
 
 ## Troubleshooting
 
@@ -126,6 +133,14 @@ title: VigoBus
 show_alerts: true
 show_all_stops: true
 ```
+
+## Development
+
+`npm test` (or `node test/vigobus-card.test.js`) runs a dependency-free
+regression suite against `dist/vigobus-card.js` — stop grouping/line-filter
+logic, the `card_style` selector, and a couple of tripwires for two bugs that
+previously shipped silently (a missing visual editor, a mobile layout
+overflow). It runs on every push/PR via GitHub Actions.
 
 ## Support
 
