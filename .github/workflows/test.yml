@@ -1,0 +1,19 @@
+name: Card tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Check syntax
+        run: node --check dist/vigobus-card.js
+      - name: Run tests
+        run: node test/vigobus-card.test.js

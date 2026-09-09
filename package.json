@@ -1,0 +1,8 @@
+{
+  "name": "lovelace-vigobus-card",
+  "private": true,
+  "description": "VigoBus dashboard card for Home Assistant",
+  "scripts": {
+    "test": "node test/vigobus-card.test.js"
+  }
+}

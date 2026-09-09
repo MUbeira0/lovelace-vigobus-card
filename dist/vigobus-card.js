@@ -877,20 +877,9 @@ class VigoBusCard extends HTMLElement {
       device_location_title: "",
       device_location_tie_margin_m: 60,
       device_location_max_candidates: 3,
-      device_location_refresh_seconds: 45,
+      device_location_refresh_seconds: 20,
       device_location_source: "auto",
-      stop1_entity: "sensor.vigobus_nearest",
-      stop1_title: "",
-      stop2_entity: "",
-      stop2_title: "",
-      stop3_entity: "",
-      stop3_title: "",
-      stop4_entity: "",
-      stop4_title: "",
-      stop5_entity: "",
-      stop5_title: "",
-      stop6_entity: "",
-      stop6_title: "",
+      stops: [{ entity: "sensor.vigobus_nearest", title: "", line: "" }],
     };
   }
 
@@ -919,7 +908,7 @@ class VigoBusCard extends HTMLElement {
       device_location_title: "",
       device_location_tie_margin_m: 60,
       device_location_max_candidates: 3,
-      device_location_refresh_seconds: 45,
+      device_location_refresh_seconds: 20,
       device_location_source: "auto",
       stops: [],
     };
@@ -951,7 +940,7 @@ class VigoBusCard extends HTMLElement {
         config.device_location_max_candidates ?? this._config.device_location_max_candidates ?? 3
       ),
       device_location_refresh_seconds: Number(
-        config.device_location_refresh_seconds ?? this._config.device_location_refresh_seconds ?? 45
+        config.device_location_refresh_seconds ?? this._config.device_location_refresh_seconds ?? 20
       ),
       device_location_source: ["auto", "browser", "person"].includes(
         String(config.device_location_source ?? this._config.device_location_source ?? "auto").toLowerCase()
@@ -992,14 +981,32 @@ class VigoBusCard extends HTMLElement {
     }
 
     this._refreshDeviceLocation();
-    const seconds = Math.max(15, Number(this._config.device_location_refresh_seconds) || 45);
-    this._deviceLocationTimer = setInterval(() => this._refreshDeviceLocation(), seconds * 1000);
+    const seconds = Math.max(10, Number(this._config.device_location_refresh_seconds) || 20);
+    this._deviceLocationTimer = setInterval(() => {
+      // Skip ticks while the dashboard tab/app isn't visible — no point
+      // burning battery/network polling a location no one is looking at.
+      if (document.visibilityState === "hidden") return;
+      this._refreshDeviceLocation();
+    }, seconds * 1000);
+
+    // Jump straight to a fresh reading the moment the dashboard becomes
+    // visible again, instead of waiting out the rest of the interval.
+    this._visibilityHandler = () => {
+      if (document.visibilityState === "visible") {
+        this._refreshDeviceLocation();
+      }
+    };
+    document.addEventListener("visibilitychange", this._visibilityHandler);
   }
 
   _stopDeviceLocationLoop() {
     if (this._deviceLocationTimer) {
       clearInterval(this._deviceLocationTimer);
       this._deviceLocationTimer = null;
+    }
+    if (this._visibilityHandler) {
+      document.removeEventListener("visibilitychange", this._visibilityHandler);
+      this._visibilityHandler = null;
     }
   }
 
@@ -1168,7 +1175,11 @@ class VigoBusCard extends HTMLElement {
           this._render();
         }
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 20000 }
+      // maximumAge: 0 forces a brand new GPS fix on every call instead of
+      // letting the browser hand back a stale cached position — "my
+      // location" is meant to track wherever the viewer actually is right
+      // now, not where they were up to maximumAge ms ago.
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   }
 
@@ -1214,7 +1225,7 @@ class VigoBusCard extends HTMLElement {
       }
 
       const indicator = style.busIndicator === "dot"
-        ? `<span class="status-dot ${live ? "live" : "scheduled"}" title="${escapeHtml(live ? t(locale, "live") : t(locale, "scheduled"))}"></span>`
+        ? `<span class="status-dot ${live ? "live" : "scheduled"}" title="${escapeHtml(live ? t(locale, "live") : t(locale, "scheduled"))}"><span class="visually-hidden">${escapeHtml(live ? t(locale, "live") : t(locale, "scheduled"))}</span></span>`
         : "";
 
       return `
@@ -1966,13 +1977,31 @@ class VigoBusCard extends HTMLElement {
           height: 8px;
           border-radius: 50%;
           margin-right: 6px;
-          background: var(--vigobus-muted);
           vertical-align: middle;
+          /* Scheduled = hollow ring, live = solid fill below — a shape
+             difference, not just a color one, so it still reads for
+             colorblind viewers or on a low-contrast screen. */
+          background: transparent;
+          border: 1.5px solid var(--vigobus-muted);
+          box-sizing: border-box;
         }
 
         .status-dot.live {
           background: #16a34a;
+          border-color: #16a34a;
           animation: vigobus-live-pulse 2.2s ease-in-out infinite;
+        }
+
+        .visually-hidden {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          padding: 0;
+          margin: -1px;
+          overflow: hidden;
+          clip: rect(0, 0, 0, 0);
+          white-space: nowrap;
+          border: 0;
         }
 
         .page-btn--pill {
@@ -2181,7 +2210,7 @@ class VigoBusCardEditor extends HTMLElement {
       device_location_title: "",
       device_location_tie_margin_m: 60,
       device_location_max_candidates: 3,
-      device_location_refresh_seconds: 45,
+      device_location_refresh_seconds: 20,
       device_location_source: "auto",
       stops: [],
       ...config,
@@ -2349,6 +2378,8 @@ class VigoBusCardEditor extends HTMLElement {
               id="next_buses_count"
               label="${escapeHtml(t(locale, "next_count"))}"
               type="number"
+              min="1"
+              max="20"
             ></ha-textfield>
           </div>
         </div>
@@ -2366,6 +2397,8 @@ class VigoBusCardEditor extends HTMLElement {
             id="max_stops"
             label="M\u00e1ximo de paradas"
             type="number"
+            min="1"
+            max="20"
           ></ha-textfield>
           <div>
             <label style="display:flex; align-items:center; gap:10px; padding-top: 20px;">
@@ -2420,6 +2453,8 @@ class VigoBusCardEditor extends HTMLElement {
             id="alerts_max"
             label="${escapeHtml(t(locale, "alerts_max"))}"
             type="number"
+            min="1"
+            max="25"
           ></ha-textfield>
         </div>
 
@@ -2446,17 +2481,23 @@ class VigoBusCardEditor extends HTMLElement {
               id="device_location_tie_margin_m"
               label="${escapeHtml(t(locale, "device_location_margin"))}"
               type="number"
+              min="0"
+              max="500"
             ></ha-textfield>
             <ha-textfield
               id="device_location_max_candidates"
               label="${escapeHtml(t(locale, "device_location_max_candidates"))}"
               type="number"
+              min="1"
+              max="5"
             ></ha-textfield>
           </div>
           <ha-textfield
             id="device_location_refresh_seconds"
             label="${escapeHtml(t(locale, "device_location_refresh"))}"
             type="number"
+            min="10"
+            max="300"
           ></ha-textfield>
           <label style="display:flex; flex-direction:column; gap:4px;">
             <span>${escapeHtml(t(locale, "device_location_source"))}</span>
