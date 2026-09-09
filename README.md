@@ -21,6 +21,8 @@ Dashboard card for Home Assistant that displays VigoBus and Vitrasa arrival time
 - Spanish, English, and Galician UI
 - Compact mode and card editor
 - Follows your Home Assistant light/dark theme instead of a fixed dark look
+- Only re-renders when the entities it actually shows change, instead of on every unrelated state change in the house — no more restarted animations or visual "jumps" from background dashboard activity
+- A stop with no upcoming buses shows a clean "no estimations" message instead of stray placeholder dashes or a raw "unknown"
 
 ## Installation with HACS
 
