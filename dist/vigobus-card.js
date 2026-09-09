@@ -271,6 +271,14 @@ function t(locale, key) {
   return (TEXTS[locale] && TEXTS[locale][key]) || TEXTS.es[key] || key;
 }
 
+function isPlaceholderText(value) {
+  // Home Assistant's own sentinel strings for "no state yet" — these are
+  // valid entity.state values, not real line/route text, but a plain `||`
+  // fallback chain treats them as truthy and displays them verbatim.
+  const text = String(value ?? "").trim().toLowerCase();
+  return !text || text === "unknown" || text === "unavailable" || text === "none";
+}
+
 function parseMinutes(value) {
   if (value === null || value === undefined || value === "" || value === "unknown") {
     return null;
@@ -395,6 +403,26 @@ function buildStopGroups(hass) {
   }
 
   return [...groups.values()].sort((a, b) => a.title.localeCompare(b.title, "es"));
+}
+
+function computeRenderSignature(hass) {
+  // Home Assistant calls the `hass` setter on essentially every state
+  // change anywhere in the system, not just for this card's own entities —
+  // re-rendering the whole shadow DOM (innerHTML) on every one of those
+  // ticks is what caused the visible "jumps" (restarted CSS animations,
+  // lost hover/scroll state, needless reflow). Only the entities this card
+  // actually reads can affect its output, so hash just those and let the
+  // caller skip re-rendering when nothing relevant changed.
+  const groups = buildStopGroups(hass);
+  const relevant = groups.map((group) => [
+    group.key,
+    group.entity?.state,
+    group.entity?.attributes,
+    group.linea?.state,
+    group.ruta?.state,
+    group.proximos?.state,
+  ]);
+  return JSON.stringify([hass?.language, relevant]);
 }
 
 function normalizeConfiguredStops(configStops) {
@@ -557,7 +585,15 @@ function getLineFromGroup(group, lineFilter) {
   if (lineFilter) {
     return normalizeLine(lineFilter);
   }
-  return group?.entity?.attributes?.linea || group?.linea?.state || "-";
+  const attrLine = group?.entity?.attributes?.linea;
+  if (!isPlaceholderText(attrLine)) {
+    return attrLine;
+  }
+  const sensorLine = group?.linea?.state;
+  if (!isPlaceholderText(sensorLine)) {
+    return sensorLine;
+  }
+  return "-";
 }
 
 function getRouteFromGroup(group, lineFilter) {
@@ -570,8 +606,11 @@ function getRoutesFromGroup(group, lineFilter) {
   const seen = new Set();
 
   const appendRoute = (value) => {
-    const text = String(value || "").trim();
-    if (!text || text === "-") {
+    if (isPlaceholderText(value)) {
+      return;
+    }
+    const text = String(value).trim();
+    if (text === "-") {
       return;
     }
     const key = text.toUpperCase();
@@ -950,11 +989,26 @@ class VigoBusCard extends HTMLElement {
       stops: normalizeConfiguredStops(config),
     };
     this._syncDeviceLocationLoop();
+    // Config changes always re-render regardless of the hass-derived
+    // signature (a new stop/filter can change the output even if no
+    // entity's state changed) — keep the cached signature in sync so a
+    // later hass tick with unchanged data doesn't force a redundant render.
+    if (this._hass) {
+      this._lastRenderSignature = computeRenderSignature(this._hass);
+    }
     this._render();
   }
 
   set hass(hass) {
     this._hass = hass;
+    const signature = computeRenderSignature(hass);
+    if (signature === this._lastRenderSignature) {
+      // Nothing this card actually displays changed — skip the render
+      // entirely instead of tearing down and rebuilding the whole card on
+      // every unrelated state change in the house.
+      return;
+    }
+    this._lastRenderSignature = signature;
     this._render();
   }
 
@@ -1285,11 +1339,12 @@ class VigoBusCard extends HTMLElement {
           const routeEntries = getRouteEntriesFromGroup(group, lineFilter);
           const route = routeEntries.map((item) => formatRouteWithLine(item.line || line, item.route)).join(" | ");
           const routeLabel = routeEntries.length > 1 ? t(locale, "routes") : t(locale, "route");
+          const hasLineData = line !== "-" || route !== "-";
           return `
             <div class="hero-top">
               <div>
                 <div class="stop-name">${escapeHtml(group.title)}</div>
-                <div class="meta">${escapeHtml(t(locale, "line"))}: <b>${escapeHtml(line)}</b><br>${escapeHtml(routeLabel)}: <b>${escapeHtml(route)}</b></div>
+                ${hasLineData ? `<div class="meta">${line !== "-" ? `${escapeHtml(t(locale, "line"))}: <b>${escapeHtml(line)}</b><br>` : ""}${escapeHtml(routeLabel)}: <b>${escapeHtml(route)}</b></div>` : ""}
               </div>
               <div class="main-time">${minutes === null ? escapeHtml(t(locale, "unavailable")) : escapeHtml(formatShortDuration(minutes))}</div>
             </div>
@@ -1416,6 +1471,12 @@ class VigoBusCard extends HTMLElement {
     const mainRoute = mainRouteEntries[0]?.route || "-";
     const mainRouteFull = mainRouteEntries.map((item) => formatRouteWithLine(item.line || mainLine, item.route)).join(" | ");
     const mainRouteLabel = mainRouteEntries.length > 1 ? t(locale, "routes") : t(locale, "route");
+    // Not just mainLine !== "-": a stop can have real per-bus route data
+    // even when the top-level "linea" summary attribute itself is unset.
+    // mainRouteEntries always has at least one padding entry ({line:"-",
+    // route:"-"}) even for a genuinely empty stop, so check the resolved
+    // text instead of the array length.
+    const hasMainLineData = mainLine !== "-" || mainRouteFull !== "-";
     const mainDistance = getDistanceFromGroup(primaryGroup);
     const updatedAt = getUpdatedAtFromGroup(primaryGroup);
     const maxStops = Math.max(1, Number(this._config.max_stops) || 6);
@@ -2081,7 +2142,9 @@ class VigoBusCard extends HTMLElement {
               <div class="hero-top">
                 <div>
                   <div class="stop-name">${escapeHtml(mainTitle)}</div>
-                  <div class="meta">${escapeHtml(t(locale, "line"))}: <b>${escapeHtml(mainLine)}</b><br>${escapeHtml(mainRouteLabel)}: <b>${escapeHtml(mainRouteFull)}</b>${mainDistance !== null ? `<br>${escapeHtml(t(locale, "distance"))}: <b>${mainDistance.toFixed(0)} m</b>` : ""}</div>
+                  ${hasMainLineData || mainDistance !== null ? `
+                    <div class="meta">${hasMainLineData ? `${mainLine !== "-" ? `${escapeHtml(t(locale, "line"))}: <b>${escapeHtml(mainLine)}</b><br>` : ""}${escapeHtml(mainRouteLabel)}: <b>${escapeHtml(mainRouteFull)}</b>` : ""}${mainDistance !== null ? `${hasMainLineData ? "<br>" : ""}${escapeHtml(t(locale, "distance"))}: <b>${mainDistance.toFixed(0)} m</b>` : ""}</div>
+                  ` : ""}
                 </div>
                 <div class="main-time">
                   ${escapeHtml(statusShort)}
@@ -2093,7 +2156,6 @@ class VigoBusCard extends HTMLElement {
                 <div class="pill">${mainAllBuses.length} ${escapeHtml(mainAllBuses.length === 1 ? t(locale, "bus") : t(locale, "buses"))}</div>
                 ${this._config.show_alerts ? `<div class="pill">${escapeHtml(visibleAlerts.length)} ${escapeHtml(t(locale, "alerts"))}</div>` : ""}
                 ${stale ? `<div class="pill">${escapeHtml(t(locale, "stale"))}</div><div class="pill">${escapeHtml(t(locale, "offline"))}</div>` : ""}
-                ${primaryGroup.entity?.state === "unknown" ? `<div class="pill">${escapeHtml(t(locale, "no_data"))}</div>` : ""}
               </div>
             ` : `
               <div class="hero-top">
@@ -2101,19 +2163,20 @@ class VigoBusCard extends HTMLElement {
                 ${mainDistance !== null ? `<span class="pill">${mainDistance.toFixed(0)} m</span>` : ""}
               </div>
               <div class="hero-line-row">
-                <div class="hero-line-info">
-                  <span class="line-badge" style="background: ${mainLineColor}; color: ${mainLineTextColor};">${escapeHtml(mainLine)}</span>
-                  <span class="next-route">${escapeHtml(mainRoute)}</span>
-                </div>
+                ${hasMainLineData ? `
+                  <div class="hero-line-info">
+                    ${mainLine !== "-" ? `<span class="line-badge" style="background: ${mainLineColor}; color: ${mainLineTextColor};">${escapeHtml(mainLine)}</span>` : ""}
+                    <span class="next-route">${escapeHtml(mainRoute)}</span>
+                  </div>
+                ` : `<div class="hero-line-info"></div>`}
                 <div class="main-time">
                   ${escapeHtml(statusShort)}
                   <small>${escapeHtml(t(locale, "arrival"))}</small>
                 </div>
               </div>
-              ${stale || primaryGroup.entity?.state === "unknown" ? `
+              ${stale ? `
                 <div class="pill-row">
-                  ${stale ? `<div class="pill">${escapeHtml(t(locale, "stale"))}</div><div class="pill">${escapeHtml(t(locale, "offline"))}</div>` : ""}
-                  ${primaryGroup.entity?.state === "unknown" ? `<div class="pill">${escapeHtml(t(locale, "no_data"))}</div>` : ""}
+                  <div class="pill">${escapeHtml(t(locale, "stale"))}</div><div class="pill">${escapeHtml(t(locale, "offline"))}</div>
                 </div>
               ` : ""}
             `}

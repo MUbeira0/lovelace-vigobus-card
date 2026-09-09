@@ -140,6 +140,49 @@ assertEqual(filteredNone, [], "unknown line filter yields empty list");
 
 assertEqual(sandbox.getLineFromGroup(nearestGroup, "c1"), "C1", "getLineFromGroup echoes normalized filter");
 
+// --- "unknown"/"unavailable" leak regression ---------------------------------
+// A stop with no upcoming buses has no "linea"/"ruta" attribute at all, so
+// the code used to fall back to the separate line/route sensor's own raw
+// HA state — which is the literal string "unknown" when that sensor also
+// has no data, and a bare `||` fallback treats a non-empty string as valid.
+
+const emptyStopHass = {
+  language: "es",
+  states: {
+    "sensor.vigobus_nearest": {
+      entity_id: "sensor.vigobus_nearest",
+      state: "unknown",
+      attributes: { friendly_name: "VigoBus Cercana", stop_name: "Cercana" },
+    },
+    "sensor.vigobus_nearest_linea": {
+      entity_id: "sensor.vigobus_nearest_linea",
+      state: "unknown",
+      attributes: {},
+    },
+    "sensor.vigobus_nearest_ruta": {
+      entity_id: "sensor.vigobus_nearest_ruta",
+      state: "unavailable",
+      attributes: {},
+    },
+  },
+};
+
+const emptyGroups = sandbox.buildSelectedGroups(emptyStopHass, {});
+const emptyGroup = emptyGroups.find((g) => g.key === "nearest");
+assertEqual(sandbox.getLineFromGroup(emptyGroup, ""), "-", "getLineFromGroup never surfaces a raw 'unknown' sensor state");
+assertEqual(sandbox.getRoutesFromGroup(emptyGroup, ""), ["-"], "getRoutesFromGroup never surfaces a raw 'unknown'/'unavailable' sensor state");
+
+// getRouteEntriesFromGroup always pads to one {line:"-", route:"-"} entry
+// even for a genuinely empty stop — callers must check the *resolved text*
+// (e.g. route !== "-"), not entries.length, to detect "no real data". This
+// non-obvious contract caused a real bug (an empty stop briefly showed a
+// bare "-" badge and "Línea: -" instead of hiding that row entirely).
+assertEqual(
+  sandbox.getRouteEntriesFromGroup(emptyGroup, ""),
+  [{ line: "-", route: "-" }],
+  "getRouteEntriesFromGroup pads to a placeholder entry for an empty stop (callers must check route !== '-', not array length)"
+);
+
 // --- filterBusesByLine (device-location helper) -----------------------------
 
 const deviceBuses = [
@@ -212,6 +255,91 @@ assertTrue(
   /overflow-x:\s*hidden/.test(ruleBody(":host")) && /max-width:\s*100%/.test(ruleBody(":host")),
   ":host keeps its overflow-x/max-width safety net"
 );
+
+// --- render-skip regression: hass ticks with unchanged data should not ------
+// re-render at all. Home Assistant calls the hass setter on essentially
+// every state change system-wide, and rebuilding the whole shadow DOM
+// (innerHTML) on every one of those ticks caused visible "jumps" (restarted
+// CSS animations, lost hover state). Needs its own vm context with an
+// instrumented attachShadow(), since VigoBusCard is already bound to the
+// main sandbox's plain FakeHTMLElement.
+
+{
+  let renderCount = 0;
+
+  class CountingHTMLElement {
+    attachShadow() {
+      const shadow = { querySelectorAll: () => [], getElementById: () => null };
+      let html = "";
+      Object.defineProperty(shadow, "innerHTML", {
+        get: () => html,
+        set: (value) => {
+          html = value;
+          renderCount += 1;
+        },
+      });
+      this.shadowRoot = shadow;
+      return shadow;
+    }
+  }
+
+  let CapturedCardClass = null;
+  const renderSandbox = {
+    window: { customCards: [] },
+    HTMLElement: CountingHTMLElement,
+    customElements: {
+      define: (tag, cls) => {
+        if (tag === "vigobus-card") CapturedCardClass = cls;
+      },
+      get: () => undefined,
+    },
+    document: { createElement: () => ({}), addEventListener: () => {}, removeEventListener: () => {} },
+    navigator: {},
+    console,
+  };
+  vm.createContext(renderSandbox);
+  vm.runInContext(src, renderSandbox, { filename: "vigobus-card.js (render-skip test)" });
+
+  const hassV1 = {
+    language: "es",
+    states: {
+      "sensor.vigobus_nearest": {
+        entity_id: "sensor.vigobus_nearest",
+        state: "5",
+        attributes: { stop_name: "Cercana", buses: [{ linea: "C1", ruta: "Centro", minutos: 5 }] },
+      },
+    },
+  };
+  // A fresh object with identical *content* — simulates HA handing the card
+  // a new hass reference on an unrelated state change elsewhere in the house.
+  const hassV1Clone = JSON.parse(JSON.stringify(hassV1));
+  const hassV2 = {
+    language: "es",
+    states: {
+      "sensor.vigobus_nearest": {
+        entity_id: "sensor.vigobus_nearest",
+        state: "3",
+        attributes: { stop_name: "Cercana", buses: [{ linea: "C1", ruta: "Centro", minutos: 3 }] },
+      },
+    },
+  };
+
+  // VigoBusCard is a top-level `class`, not exposed on the sandbox object
+  // directly — CapturedCardClass was captured via customElements.define()
+  // above, the same way Home Assistant obtains it.
+  const instance = new CapturedCardClass();
+  instance.setConfig({ title: "VigoBus", stops: [{ entity: "sensor.vigobus_nearest", title: "" }] });
+
+  instance.hass = hassV1;
+  const afterFirst = renderCount;
+  assertTrue(afterFirst >= 1, "first hass assignment renders");
+
+  instance.hass = hassV1Clone;
+  assertEqual(renderCount, afterFirst, "hass tick with unchanged data does not re-render");
+
+  instance.hass = hassV2;
+  assertEqual(renderCount, afterFirst + 1, "hass tick with actually-changed data re-renders exactly once");
+}
 
 console.log(failures === 0 ? "\nall tests passed" : `\n${failures} test(s) failed`);
 process.exitCode = failures === 0 ? 0 : 1;
