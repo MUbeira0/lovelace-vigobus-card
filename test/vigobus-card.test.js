@@ -365,6 +365,151 @@ assertTrue(
   "the 'my location' section renders its selected candidate's alerts as clickable items"
 );
 
+// --- trip planner ------------------------------------------------------------
+// Full journey planning (origin -> destination with transfers), backed by the
+// integration's new search_stops/plan_trip services. Gated behind its own
+// trip_planner_mode toggle (off by default) so it's opt-in per dashboard.
+
+assertEqual(
+  sandbox.normalizeStopSuggestions({ response: { stops: [{ id: "1", name: "A" }] } }),
+  [{ id: "1", name: "A" }],
+  "normalizeStopSuggestions extracts the stops array from a service response"
+);
+assertEqual(
+  sandbox.normalizeStopSuggestions({ response: {} }),
+  [],
+  "normalizeStopSuggestions defaults to an empty list when stops is missing"
+);
+assertEqual(
+  sandbox.normalizeStopSuggestions(null),
+  [],
+  "normalizeStopSuggestions tolerates a null service response"
+);
+
+assertEqual(
+  sandbox.normalizePlanTripResponse({ response: { itineraries: [{ arrive: "08:20" }], warnings: [] } }),
+  { itineraries: [{ arrive: "08:20" }], warnings: [] },
+  "normalizePlanTripResponse passes through a well-formed response"
+);
+assertEqual(
+  sandbox.normalizePlanTripResponse({ response: {} }),
+  { itineraries: [], warnings: [] },
+  "normalizePlanTripResponse defaults missing arrays to empty lists"
+);
+assertEqual(
+  sandbox.normalizePlanTripResponse(null),
+  { itineraries: [], warnings: ["trip_error"] },
+  "normalizePlanTripResponse reports trip_error for a missing response"
+);
+
+const tripServiceCalls = [];
+const tripCardInstance = new CardClass();
+tripCardInstance.setConfig({
+  title: "VigoBus",
+  stops: [{ entity: "sensor.vigobus_nearest", title: "" }],
+  trip_planner_mode: true,
+});
+tripCardInstance.hass = {
+  language: "es",
+  user: { id: "u1" },
+  states: {
+    "person.test": {
+      entity_id: "person.test",
+      attributes: { user_id: "u1", latitude: 42.0, longitude: -8.0, friendly_name: "Test" },
+    },
+  },
+  connection: {
+    sendMessagePromise: async (message) => {
+      tripServiceCalls.push(message);
+      if (message.service === "search_stops") {
+        return { response: { stops: [{ id: "6930", stop_id: "3493", name: "Praza de America" }] } };
+      }
+      if (message.service === "plan_trip") {
+        return {
+          response: {
+            itineraries: [
+              {
+                depart: "08:00",
+                arrive: "08:20",
+                duration_min: 20,
+                transfers: 1,
+                legs: [
+                  { mode: "walk", to_stop: { name: "Parada A" }, duration_min: 3 },
+                  {
+                    mode: "bus",
+                    line: "C1",
+                    line_color: "#ED4713",
+                    from_stop: { name: "Parada A" },
+                    to_stop: { name: "Parada B" },
+                    depart: "08:03",
+                    arrive: "08:15",
+                    live: { is_live: true, minutos: 5 },
+                  },
+                  { mode: "walk", from_stop: { name: "Parada B" }, duration_min: 2 },
+                ],
+              },
+            ],
+            warnings: [],
+          },
+        };
+      }
+      return { response: {} };
+    },
+  },
+};
+
+assertTrue(
+  /data-trip-query/.test(tripCardInstance.shadowRoot.innerHTML),
+  "trip_planner_mode renders the destination search box"
+);
+
+tripCardInstance._tripState.query = "praza";
+// A real chain of awaits (search -> plan), so this can't use the earlier
+// fire-and-forget trick (that relied on the stub having no internal await).
+// Kept as a named async function invoked at the very end of the file
+// instead of top-level await, which a plain CommonJS script can't use —
+// see the final .then() chain below, which defers the pass/fail summary
+// and exit code until after this actually finishes.
+async function runTripPlannerAsyncTests() {
+  await tripCardInstance._searchTripDestinations();
+  assertEqual(
+    tripCardInstance._tripState.suggestions,
+    [{ id: "6930", stop_id: "3493", name: "Praza de America" }],
+    "_searchTripDestinations populates suggestions from the search_stops service"
+  );
+  assertEqual(
+    tripServiceCalls[0].service_data.query,
+    "praza",
+    "_searchTripDestinations forwards the typed query to search_stops"
+  );
+
+  tripCardInstance._tripState = {
+    ...tripCardInstance._tripState,
+    destination: { id: "6930", stop_id: "3493", name: "Praza de America" },
+  };
+  await tripCardInstance._planTrip();
+
+  const planCall = tripServiceCalls.find((call) => call.service === "plan_trip");
+  assertEqual(
+    planCall?.service_data?.destination_stop_id,
+    "3493",
+    "_planTrip sends the GTFS stop_id (not the vitrasa id) as the destination"
+  );
+  assertEqual(
+    planCall?.service_data?.origin_latitude,
+    42.0,
+    "_planTrip falls back to the viewer's person entity when there's no browser geolocation"
+  );
+
+  const html = tripCardInstance.shadowRoot.innerHTML;
+  assertTrue(
+    html.includes("Parada A") && html.includes("Parada B") && html.includes("08:03") && html.includes("08:15"),
+    "the planned itinerary's legs (stops and times) are rendered"
+  );
+  assertTrue(html.includes(">C1<"), "the bus leg shows its line badge");
+  assertTrue(/5 min/.test(html), "a live leg shows its live minutes");
+}
+
 // --- mobile overflow fix: CSS regression guard ------------------------------
 // A long, unbreakable line/route name used to push the whole card past the
 // screen edge because these grid items had no min-width: 0. Not a full
@@ -477,5 +622,12 @@ assertTrue(
   assertEqual(renderCount, afterFirst + 1, "hass tick with actually-changed data re-renders exactly once");
 }
 
-console.log(failures === 0 ? "\nall tests passed" : `\n${failures} test(s) failed`);
-process.exitCode = failures === 0 ? 0 : 1;
+runTripPlannerAsyncTests()
+  .catch((err) => {
+    failures += 1;
+    console.error("FAIL trip planner async tests threw:", err);
+  })
+  .then(() => {
+    console.log(failures === 0 ? "\nall tests passed" : `\n${failures} test(s) failed`);
+    process.exitCode = failures === 0 ? 0 : 1;
+  });
