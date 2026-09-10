@@ -79,6 +79,22 @@ const TEXTS = {
     card_style_glass: "Cristal clásico",
     card_style_glass_refined: "Cristal refinado",
     card_style_bold: "Bus urbano (Transit)",
+    trip_planner_title: "Planificador de viaje",
+    trip_planner_enable: "Activar planificador de viaje",
+    trip_destination: "Destino",
+    trip_destination_placeholder: "Busca una parada de destino…",
+    trip_search_button: "Buscar",
+    trip_searching: "Buscando paradas…",
+    trip_change_destination: "Cambiar destino",
+    trip_planning: "Calculando ruta…",
+    trip_no_route: "No se encontró ninguna ruta a ese destino.",
+    trip_no_service: "No hay servicio de autobús ese día.",
+    trip_error: "No se pudo calcular la ruta. Inténtalo de nuevo.",
+    trip_direct: "Directo, sin transbordos",
+    trip_transfer_one: "transbordo",
+    trip_transfers: "transbordos",
+    trip_walk_to: "Camina hasta",
+    trip_walk_from: "Camina desde",
   },
   en: {
     unknown: "Unknown",
@@ -156,6 +172,22 @@ const TEXTS = {
     card_style_glass: "Classic glass",
     card_style_glass_refined: "Refined glass",
     card_style_bold: "Urban bus (Transit)",
+    trip_planner_title: "Trip planner",
+    trip_planner_enable: "Enable trip planner",
+    trip_destination: "Destination",
+    trip_destination_placeholder: "Search for a destination stop…",
+    trip_search_button: "Search",
+    trip_searching: "Searching stops…",
+    trip_change_destination: "Change destination",
+    trip_planning: "Calculating route…",
+    trip_no_route: "No route found to that destination.",
+    trip_no_service: "There's no bus service that day.",
+    trip_error: "Couldn't calculate the route. Please try again.",
+    trip_direct: "Direct, no transfers",
+    trip_transfer_one: "transfer",
+    trip_transfers: "transfers",
+    trip_walk_to: "Walk to",
+    trip_walk_from: "Walk from",
   },
   gl: {
     unknown: "Desco\u00f1ecido",
@@ -233,6 +265,22 @@ const TEXTS = {
     card_style_glass: "Cristal cl\u00e1sico",
     card_style_glass_refined: "Cristal refinado",
     card_style_bold: "Bus urbano (Transit)",
+    trip_planner_title: "Planificador de viaxe",
+    trip_planner_enable: "Activar planificador de viaxe",
+    trip_destination: "Destino",
+    trip_destination_placeholder: "Busca unha parada de destino…",
+    trip_search_button: "Buscar",
+    trip_searching: "Buscando paradas…",
+    trip_change_destination: "Cambiar destino",
+    trip_planning: "Calculando ruta…",
+    trip_no_route: "Non se atopou ningunha ruta a ese destino.",
+    trip_no_service: "Non hai servizo de autobús ese día.",
+    trip_error: "Non se puido calcular a ruta. Téntao de novo.",
+    trip_direct: "Directo, sen transbordos",
+    trip_transfer_one: "transbordo",
+    trip_transfers: "transbordos",
+    trip_walk_to: "Camiña até",
+    trip_walk_from: "Camiña desde",
   },
 };
 
@@ -374,6 +422,22 @@ function formatAlertDateRange(alert, locale) {
     return `${start} – ${end}`;
   }
   return start || end || null;
+}
+
+function normalizeStopSuggestions(serviceResult) {
+  const stops = serviceResult?.response?.stops;
+  return Array.isArray(stops) ? stops : [];
+}
+
+function normalizePlanTripResponse(serviceResult) {
+  const response = serviceResult?.response;
+  if (!response || typeof response !== "object") {
+    return { itineraries: [], warnings: ["trip_error"] };
+  }
+  return {
+    itineraries: Array.isArray(response.itineraries) ? response.itineraries : [],
+    warnings: Array.isArray(response.warnings) ? response.warnings : [],
+  };
 }
 
 function getBaseStopKey(entityId) {
@@ -950,6 +1014,7 @@ class VigoBusCard extends HTMLElement {
       device_location_max_candidates: 3,
       device_location_refresh_seconds: 20,
       device_location_source: "auto",
+      trip_planner_mode: false,
       stops: [{ entity: "sensor.vigobus_nearest", title: "", line: "" }],
     };
   }
@@ -981,6 +1046,7 @@ class VigoBusCard extends HTMLElement {
       device_location_max_candidates: 3,
       device_location_refresh_seconds: 20,
       device_location_source: "auto",
+      trip_planner_mode: false,
       stops: [],
     };
     this._deviceLocationState = null;
@@ -988,6 +1054,15 @@ class VigoBusCard extends HTMLElement {
     this._busPage = {};
     this._openAlert = null;
     this._alertLookup = new Map();
+    this._tripState = {
+      status: "idle",
+      query: "",
+      suggestions: [],
+      destination: null,
+      result: null,
+      error: null,
+    };
+    this._tripSearchToken = 0;
     this.attachShadow({ mode: "open" });
   }
 
@@ -1020,6 +1095,7 @@ class VigoBusCard extends HTMLElement {
       )
         ? String(config.device_location_source ?? this._config.device_location_source ?? "auto").toLowerCase()
         : "auto",
+      trip_planner_mode: Boolean(config.trip_planner_mode ?? this._config.trip_planner_mode ?? false),
       stops: normalizeConfiguredStops(config),
     };
     this._syncDeviceLocationLoop();
@@ -1522,6 +1598,216 @@ class VigoBusCard extends HTMLElement {
       <div class="section">
         <h4>${escapeHtml(heading)}</h4>
         ${body}
+      </div>
+    `;
+  }
+
+  _resolveMyLocationCoords() {
+    return new Promise((resolve, reject) => {
+      const fallbackToPerson = () => {
+        const person = this._findPersonForViewer();
+        if (person) {
+          resolve({ lat: person.attributes.latitude, lon: person.attributes.longitude });
+        } else {
+          reject(new Error("no_geolocation"));
+        }
+      };
+
+      if (!navigator.geolocation) {
+        fallbackToPerson();
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => resolve({ lat: position.coords.latitude, lon: position.coords.longitude }),
+        fallbackToPerson,
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+    });
+  }
+
+  async _searchTripDestinations() {
+    const query = String(this._tripState.query || "").trim();
+    if (query.length < 2) {
+      this._tripState = { ...this._tripState, suggestions: [], error: null };
+      this._render();
+      return;
+    }
+
+    this._tripState = { ...this._tripState, status: "searching", error: null, suggestions: [] };
+    this._render();
+
+    try {
+      const result = await this._hass.connection.sendMessagePromise({
+        type: "call_service",
+        domain: "vigobus",
+        service: "search_stops",
+        service_data: { query, limit: 8 },
+        return_response: true,
+      });
+      const stops = normalizeStopSuggestions(result);
+      this._tripState = { ...this._tripState, status: "idle", suggestions: stops };
+    } catch (err) {
+      this._tripState = { ...this._tripState, status: "idle", error: "trip_error" };
+    }
+    this._render();
+  }
+
+  _selectTripDestination(index) {
+    const stop = this._tripState.suggestions[index];
+    if (!stop) {
+      return;
+    }
+    this._tripState = { ...this._tripState, destination: stop, suggestions: [], query: "" };
+    this._planTrip();
+  }
+
+  _clearTripDestination() {
+    this._tripState = { ...this._tripState, destination: null, result: null, error: null };
+    this._render();
+  }
+
+  async _planTrip() {
+    const destination = this._tripState.destination;
+    if (!destination) {
+      return;
+    }
+
+    this._tripState = { ...this._tripState, status: "planning", error: null, result: null };
+    this._render();
+
+    try {
+      const coords = await this._resolveMyLocationCoords();
+      const response = await this._hass.connection.sendMessagePromise({
+        type: "call_service",
+        domain: "vigobus",
+        service: "plan_trip",
+        service_data: {
+          origin_latitude: coords.lat,
+          origin_longitude: coords.lon,
+          destination_stop_id: destination.stop_id || destination.id,
+        },
+        return_response: true,
+      });
+      this._tripState = { ...this._tripState, status: "idle", result: normalizePlanTripResponse(response) };
+    } catch (err) {
+      this._tripState = {
+        ...this._tripState,
+        status: "idle",
+        error: err?.message === "no_geolocation" ? "location_unavailable" : "trip_error",
+      };
+    }
+    this._render();
+  }
+
+  _renderTripLeg(leg, locale) {
+    if (leg.mode === "walk") {
+      const stopName = leg.to_stop?.name || leg.from_stop?.name || "";
+      const label = leg.to_stop
+        ? t(locale, "trip_walk_to")
+        : t(locale, "trip_walk_from");
+      return `
+        <div class="next-item">
+          <strong>🚶</strong>
+          <span class="next-route">${escapeHtml(label)} ${escapeHtml(stopName)}</span>
+          <span class="next-minutes">${escapeHtml(formatHumanDuration(leg.duration_min))}</span>
+        </div>
+      `;
+    }
+
+    const color = getLineColor(leg.line, leg.line_color);
+    const textColor = getContrastTextColor(color);
+    const liveNote = leg.live?.is_live
+      ? `<div class="meta" style="margin-left: 30px;">${escapeHtml(t(locale, "live"))}: ${escapeHtml(String(leg.live.minutos))} min</div>`
+      : "";
+
+    return `
+      <div class="next-item">
+        <span class="line-badge" style="background: ${color}; color: ${textColor};">${escapeHtml(leg.line || "-")}</span>
+        <span class="next-route">${escapeHtml(leg.from_stop?.name || "-")} → ${escapeHtml(leg.to_stop?.name || "-")}</span>
+        <span class="next-minutes">${escapeHtml(leg.depart || "")}–${escapeHtml(leg.arrive || "")}</span>
+      </div>
+      ${liveNote}
+    `;
+  }
+
+  _renderTripResult(result, locale) {
+    const itinerary = result?.itineraries?.[0];
+    if (!itinerary) {
+      const warning = result?.warnings?.[0];
+      const key = warning === "no_service_on_date" ? "trip_no_service" : "trip_no_route";
+      return `<div class="meta" style="margin-top: 6px;">${escapeHtml(t(locale, key))}</div>`;
+    }
+
+    const transferLabel =
+      itinerary.transfers === 0
+        ? t(locale, "trip_direct")
+        : `${itinerary.transfers} ${t(locale, itinerary.transfers === 1 ? "trip_transfer_one" : "trip_transfers")}`;
+
+    return `
+      <div class="stop-item" style="margin-top: 8px;">
+        <div class="hero-top">
+          <div class="stop-name">${escapeHtml(itinerary.depart || "")} → ${escapeHtml(itinerary.arrive || "")}</div>
+          <span class="pill">${escapeHtml(formatHumanDuration(itinerary.duration_min))}</span>
+        </div>
+        <div class="meta">${escapeHtml(transferLabel)}</div>
+        <div class="next-list" style="margin-top: 6px;">
+          ${(itinerary.legs || []).map((leg) => this._renderTripLeg(leg, locale)).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  _renderTripPlannerSection(locale, styleKey) {
+    const state = this._tripState;
+
+    return `
+      <div class="section">
+        <h4>${escapeHtml(t(locale, "trip_planner_title"))}</h4>
+        <div class="trip-planner">
+          ${
+            state.destination
+              ? `
+            <div class="trip-destination-row">
+              <span class="meta">${escapeHtml(t(locale, "trip_destination"))}: <b>${escapeHtml(state.destination.name)}</b></span>
+              <button type="button" class="page-btn page-btn--pill" data-trip-clear>${escapeHtml(t(locale, "trip_change_destination"))}</button>
+            </div>
+          `
+              : `
+            <div class="trip-search-row">
+              <input
+                type="text"
+                class="trip-search-input"
+                data-trip-query
+                value="${escapeHtml(state.query)}"
+                placeholder="${escapeHtml(t(locale, "trip_destination_placeholder"))}"
+              />
+              <button type="button" class="page-btn page-btn--pill" data-trip-search-btn>${escapeHtml(t(locale, "trip_search_button"))}</button>
+            </div>
+            ${state.status === "searching" ? `<div class="meta" style="margin-top: 6px;">${escapeHtml(t(locale, "trip_searching"))}</div>` : ""}
+            ${
+              state.suggestions.length
+                ? `
+              <div class="trip-suggestions">
+                ${state.suggestions
+                  .map(
+                    (stop, index) => `
+                  <button type="button" class="trip-suggestion" data-trip-suggestion-index="${index}">
+                    ${escapeHtml(stop.name)}
+                  </button>
+                `
+                  )
+                  .join("")}
+              </div>
+            `
+                : ""
+            }
+          `
+          }
+          ${state.status === "planning" ? `<div class="meta" style="margin-top: 6px;">${escapeHtml(t(locale, "trip_planning"))}</div>` : ""}
+          ${state.error ? `<div class="meta" style="margin-top: 6px;">${escapeHtml(t(locale, state.error))}</div>` : ""}
+          ${state.result ? this._renderTripResult(state.result, locale) : ""}
+        </div>
       </div>
     `;
   }
@@ -2153,6 +2439,55 @@ class VigoBusCard extends HTMLElement {
           font-weight: 700;
         }
 
+        .trip-search-row {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .trip-search-input {
+          flex: 1;
+          min-width: 0;
+          font: inherit;
+          font-size: 13px;
+          padding: 8px 10px;
+          border-radius: 12px;
+          border: 1px solid var(--vigobus-divider);
+          background: var(--vigobus-veil-weak);
+          color: var(--vigobus-text);
+        }
+
+        .trip-destination-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .trip-suggestions {
+          margin-top: 6px;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .trip-suggestion {
+          font: inherit;
+          text-align: left;
+          cursor: pointer;
+          padding: 8px 10px;
+          border-radius: 10px;
+          border: 1px solid var(--vigobus-divider);
+          background: var(--vigobus-veil-weak);
+          color: var(--vigobus-text);
+          font-size: 13px;
+        }
+
+        .trip-suggestion:hover {
+          background: var(--vigobus-veil);
+        }
+
         .accent-line {
           height: 4px;
           background: linear-gradient(90deg, var(--vigobus-accent), rgba(255,255,255,0));
@@ -2357,6 +2692,8 @@ class VigoBusCard extends HTMLElement {
 
         ${this._config.device_location_mode ? this._renderDeviceLocationSection(locale, styleKey) : ""}
 
+        ${this._config.trip_planner_mode ? this._renderTripPlannerSection(locale, styleKey) : ""}
+
         ${this._config.show_debug && primaryGroup ? `
           <div class="debug">
             ${escapeHtml(t(locale, "debug_nearest"))}:<br>
@@ -2426,6 +2763,38 @@ class VigoBusCard extends HTMLElement {
     this.shadowRoot.querySelectorAll("[data-alert-close]").forEach((button) => {
       button.addEventListener("click", () => this._closeAlertModal());
     });
+
+    if (this._config.trip_planner_mode) {
+      this.shadowRoot.querySelectorAll("[data-trip-query]").forEach((input) => {
+        // Mutate state without re-rendering on every keystroke — a full
+        // _render() reassigns shadowRoot.innerHTML, which would destroy this
+        // input (and its caret/focus) while the user is still typing. The
+        // search only actually runs (and re-renders) on submit.
+        input.addEventListener("input", (ev) => {
+          this._tripState.query = ev.target.value;
+        });
+        input.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter") {
+            ev.preventDefault();
+            this._searchTripDestinations();
+          }
+        });
+      });
+
+      this.shadowRoot.querySelectorAll("[data-trip-search-btn]").forEach((button) => {
+        button.addEventListener("click", () => this._searchTripDestinations());
+      });
+
+      this.shadowRoot.querySelectorAll("[data-trip-suggestion-index]").forEach((button) => {
+        button.addEventListener("click", () => {
+          this._selectTripDestination(Number(button.dataset.tripSuggestionIndex));
+        });
+      });
+
+      this.shadowRoot.querySelectorAll("[data-trip-clear]").forEach((button) => {
+        button.addEventListener("click", () => this._clearTripDestination());
+      });
+    }
   }
 }
 
@@ -2463,6 +2832,7 @@ class VigoBusCardEditor extends HTMLElement {
       device_location_max_candidates: 3,
       device_location_refresh_seconds: 20,
       device_location_source: "auto",
+      trip_planner_mode: false,
       stops: [],
       ...config,
     };
@@ -2762,6 +3132,14 @@ class VigoBusCardEditor extends HTMLElement {
         </div>
 
         <div class="row">
+          <div class="section-title">${escapeHtml(t(locale, "trip_planner_title"))}</div>
+          <label style="display:flex; align-items:center; gap:10px;">
+            <ha-switch id="trip_planner_mode"></ha-switch>
+            <span>${escapeHtml(t(locale, "trip_planner_enable"))}</span>
+          </label>
+        </div>
+
+        <div class="row">
           <div class="section-title">${escapeHtml(t(locale, "selected_stops"))}</div>
           <div class="stop-list" id="stops-list"></div>
           <button class="add-stop" id="add-stop" type="button">+ ${escapeHtml(t(locale, "add_stop"))}</button>
@@ -2789,6 +3167,7 @@ class VigoBusCardEditor extends HTMLElement {
     const deviceLocationMaxCandidates = this.shadowRoot.getElementById("device_location_max_candidates");
     const deviceLocationRefreshSeconds = this.shadowRoot.getElementById("device_location_refresh_seconds");
     const deviceLocationSource = this.shadowRoot.getElementById("device_location_source");
+    const tripPlannerMode = this.shadowRoot.getElementById("trip_planner_mode");
     const addStop = this.shadowRoot.getElementById("add-stop");
     const stopsList = this.shadowRoot.getElementById("stops-list");
 
@@ -2854,6 +3233,9 @@ class VigoBusCardEditor extends HTMLElement {
     }
     if (deviceLocationSource) {
       deviceLocationSource.value = String(config.device_location_source ?? "auto");
+    }
+    if (tripPlannerMode) {
+      tripPlannerMode.checked = Boolean(config.trip_planner_mode ?? false);
     }
 
     if (stopsList) {
@@ -2924,6 +3306,7 @@ class VigoBusCardEditor extends HTMLElement {
     deviceLocationMaxCandidates?.addEventListener("input", (ev) => this._emitConfig({ device_location_max_candidates: Number(ev.target.value) || 3 }));
     deviceLocationRefreshSeconds?.addEventListener("input", (ev) => this._emitConfig({ device_location_refresh_seconds: Number(ev.target.value) || 45 }));
     deviceLocationSource?.addEventListener("change", (ev) => this._emitConfig({ device_location_source: ev.target.value || "auto" }));
+    tripPlannerMode?.addEventListener("change", (ev) => this._emitConfig({ trip_planner_mode: ev.target.checked }));
     addStop?.addEventListener("click", () => this._addStop());
   }
 }

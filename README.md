@@ -121,6 +121,34 @@ visible — jumping straight to a fresh reading the moment you switch back to
 it — so lowering `device_location_refresh_seconds` doesn't cost battery or
 network while you're not even looking at the screen.
 
+## Trip planner
+
+Set `trip_planner_mode: true` (toggle in the card's visual editor, under
+"Planificador de viaje") to add a section that plans a real bus trip — with
+transfers — from your current location to a destination you search for. It
+requires the `vigobus-integration` backend (v2.13.0+) for the stateless
+`vigobus.search_stops` and `vigobus.plan_trip` services, which use Vigo's
+official static GTFS schedule for Vitrasa.
+
+```yaml
+type: custom:vigobus-card
+title: VigoBus
+trip_planner_mode: true
+```
+
+Type a destination and search; picking a result immediately plans the trip
+using your device's live location as the origin (same geolocation/`person`
+fallback as "My location" above). The result shows depart/arrive times, total
+duration, number of transfers, and each leg (walk or bus, with the same line
+badge colors used elsewhere on the card) — click "Cambiar destino" to search
+again.
+
+Known limitations (shared with the backend): the destination must be a stop
+you can search for, not a free-text address; only the itinerary's first bus
+leg is cross-checked against live arrival data, the rest is timetable-only;
+and a trip planned very late at night may miss a bus that started running
+the previous service day.
+
 ## Troubleshooting
 
 - If the card does not render, verify the resource is loaded and refresh the dashboard cache.
