@@ -310,6 +310,61 @@ assertTrue(
   "closing the alert removes the modal from the rendered output"
 );
 
+// --- "my location" (device location) alerts ---------------------------------
+// The stateless nearest_stops service now also returns each candidate's line
+// alerts (previously it only returned buses), so the card should both ask
+// for them in the viewer's language and render them the same clickable way
+// as the fixed-stop sections.
+
+let capturedServiceCall = null;
+const deviceLocationInstance = new CardClass();
+deviceLocationInstance.setConfig({
+  title: "VigoBus",
+  stops: [{ entity: "sensor.vigobus_nearest", title: "" }],
+  device_location_mode: true,
+});
+deviceLocationInstance._hass = {
+  language: "gl",
+  states: {},
+  connection: {
+    sendMessagePromise: async (message) => {
+      capturedServiceCall = message;
+      return { response: { candidates: [] } };
+    },
+  },
+};
+
+// _lookupNearestByCoords is async only because the real sendMessagePromise
+// is, but our stub has no internal await, so it (and the assignment below)
+// runs synchronously up to that call — no need to await the outer promise
+// here, which keeps this a plain CommonJS script (no top-level await).
+deviceLocationInstance._lookupNearestByCoords(42.0, -8.0);
+assertEqual(
+  capturedServiceCall?.service_data?.lang,
+  "gl",
+  "_lookupNearestByCoords asks the nearest_stops service for alerts in the viewer's language"
+);
+
+deviceLocationInstance._applyCandidates(
+  [
+    {
+      id: "s1",
+      name: "Stop A",
+      distance_m: 42,
+      buses: [{ linea: "C1", ruta: "Centro", minutos: 5, metros: 300 }],
+      alerts: [{ title: "Corte C1", lineas: "C1", inicio: null, fin: null, description: "Obras en la via." }],
+    },
+  ],
+  "browser",
+  null
+);
+
+assertTrue(
+  /class="next-item alert-item" data-alert-key="alert-0"/.test(deviceLocationInstance.shadowRoot.innerHTML) &&
+    deviceLocationInstance.shadowRoot.innerHTML.includes("Corte C1"),
+  "the 'my location' section renders its selected candidate's alerts as clickable items"
+);
+
 // --- mobile overflow fix: CSS regression guard ------------------------------
 // A long, unbreakable line/route name used to push the whole card past the
 // screen edge because these grid items had no min-width: 0. Not a full

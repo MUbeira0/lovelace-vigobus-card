@@ -1111,6 +1111,7 @@ class VigoBusCard extends HTMLElement {
         longitude: lon,
         tie_margin_m: Number(this._config.device_location_tie_margin_m) || 60,
         max_candidates: Number(this._config.device_location_max_candidates) || 3,
+        lang: getLocale(this._config, this._hass),
       },
       return_response: true,
     });
@@ -1463,6 +1464,12 @@ class VigoBusCard extends HTMLElement {
       const nextBusCount = Math.max(1, Number(this._config.next_buses_count) || 3);
       const lineFilter = String(this._config.line_filter || "").trim();
       const buses = filterBusesByLine(selected?.buses, lineFilter);
+      const deviceAlerts = filterAlerts(
+        selected?.alerts,
+        lineFilter,
+        Boolean(this._config.alerts_only_main_line),
+        this._config.alerts_max
+      );
 
       if (!customTitle) {
         heading = state.personName ? `${state.personName} · ${t(locale, "my_location_short")}` : genericTitle;
@@ -1493,6 +1500,20 @@ class VigoBusCard extends HTMLElement {
             <span class="pill">${Number(selected?.distance_m || 0).toFixed(0)} m</span>
           </div>
           ${this._renderBusList(`device:${selected?.id}`, buses, nextBusCount, locale, styleKey)}
+          ${this._config.show_alerts
+            ? (deviceAlerts.length
+              ? `<div class="next-list secondary-alerts">
+                  <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 2px;">${escapeHtml(t(locale, "alerts"))}</div>
+                  ${deviceAlerts.map((item) => `
+                    <div class="next-item alert-item" data-alert-key="${escapeHtml(this._registerAlert(item))}" role="button" tabindex="0">
+                      <strong>!</strong>
+                      <span class="alert-title">${escapeHtml(item?.title || "-")}</span>
+                      <span class="alert-lines">${escapeHtml(item?.lineas || "")}</span>
+                    </div>
+                  `).join("")}
+                </div>`
+              : `<div class="meta" style="margin-top: 2px;">${escapeHtml(t(locale, "no_alerts"))}</div>`)
+            : ""}
         </div>
       `;
     }
