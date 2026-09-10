@@ -41,7 +41,8 @@ function assertTrue(value, label) {
 
 class FakeHTMLElement {
   attachShadow() {
-    return { innerHTML: "", querySelectorAll: () => [], getElementById: () => null };
+    this.shadowRoot = { innerHTML: "", querySelectorAll: () => [], getElementById: () => null };
+    return this.shadowRoot;
   }
 }
 
@@ -228,6 +229,86 @@ assertTrue(!CardClass.getConfigForm, "the stale getConfigForm schema was removed
 
 const EditorClass = definedElements["vigobus-card-editor"];
 assertTrue(EditorClass, "vigobus-card-editor is registered via customElements.define");
+
+// --- alert click-to-detail ---------------------------------------------------
+// Alerts only carried a title + affected lines; clicking one now opens a
+// modal with the full description/date range the backend started sending
+// alongside "resumen"/"fecha_inicio"/"fecha_fin".
+
+assertEqual(
+  sandbox.formatAlertDateRange({ inicio: "2026-09-10", fin: "2026-09-13" }, "es"),
+  "10/09/2026 – 13/09/2026",
+  "formatAlertDateRange renders a start–end range"
+);
+assertEqual(
+  sandbox.formatAlertDateRange({ inicio: "2026-09-10", fin: "2026-09-10" }, "es"),
+  "10/09/2026",
+  "formatAlertDateRange collapses to one date when start and end match"
+);
+assertEqual(
+  sandbox.formatAlertDateRange({ inicio: "2026-09-10", fin: null }, "es"),
+  "10/09/2026",
+  "formatAlertDateRange falls back to just the start date"
+);
+assertEqual(sandbox.formatAlertDateRange({}, "es"), null, "formatAlertDateRange returns null with no dates");
+
+const alertHass = {
+  language: "es",
+  states: {
+    "sensor.vigobus_nearest": {
+      entity_id: "sensor.vigobus_nearest",
+      state: "5",
+      attributes: {
+        friendly_name: "VigoBus Cercana",
+        stop_name: "Cercana",
+        buses: [{ linea: "C1", ruta: "Ruta A", minutos: 5 }],
+        alerts: [
+          {
+            id_publicacion: "3850",
+            title: "CORTE TRAFICO SAA DO MONTE",
+            lineas: "18B",
+            inicio: "2026-09-09",
+            fin: "2026-09-10",
+            description: "Habra un corte de trafico durante el jueves.",
+            category: "Informacion general",
+          },
+        ],
+      },
+    },
+  },
+};
+
+const alertCardInstance = new CardClass();
+alertCardInstance.setConfig({ title: "VigoBus", stops: [{ entity: "sensor.vigobus_nearest", title: "" }] });
+alertCardInstance.hass = alertHass;
+
+assertTrue(
+  /class="next-item alert-item" data-alert-key="alert-0"/.test(alertCardInstance.shadowRoot.innerHTML),
+  "rendered alert item carries a data-alert-key hook for the click handler"
+);
+assertTrue(
+  !/data-alert-backdrop/.test(alertCardInstance.shadowRoot.innerHTML),
+  "no alert modal is rendered until an alert is clicked"
+);
+
+const registeredAlert = alertCardInstance._alertLookup.get("alert-0");
+assertTrue(Boolean(registeredAlert), "_registerAlert makes the alert retrievable by its data-alert-key");
+
+alertCardInstance._openAlertModal(registeredAlert);
+assertEqual(alertCardInstance._openAlert, registeredAlert, "_openAlertModal stores the clicked alert");
+assertTrue(
+  alertCardInstance.shadowRoot.innerHTML.includes("CORTE TRAFICO SAA DO MONTE") &&
+    alertCardInstance.shadowRoot.innerHTML.includes("Habra un corte de trafico durante el jueves.") &&
+    alertCardInstance.shadowRoot.innerHTML.includes("data-alert-backdrop"),
+  "opening an alert renders its title, description and the modal backdrop"
+);
+
+alertCardInstance._closeAlertModal();
+assertEqual(alertCardInstance._openAlert, null, "_closeAlertModal clears the open alert");
+assertTrue(
+  !/data-alert-backdrop/.test(alertCardInstance.shadowRoot.innerHTML),
+  "closing the alert removes the modal from the rendered output"
+);
 
 // --- mobile overflow fix: CSS regression guard ------------------------------
 // A long, unbreakable line/route name used to push the whole card past the

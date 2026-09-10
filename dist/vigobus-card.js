@@ -48,6 +48,9 @@ const TEXTS = {
     show_alerts: "Mostrar alertas",
     alerts_only_main_line: "Solo l\u00ednea principal",
     alerts_max: "Max avisos",
+    close: "Cerrar",
+    no_alert_details: "Sin más información disponible.",
+    alert_period: "Periodo",
     prev: "Ant.",
     next: "Sig.",
     line_filter: "Filtro de l\u00ednea",
@@ -122,6 +125,9 @@ const TEXTS = {
     show_alerts: "Show alerts",
     alerts_only_main_line: "Only main line",
     alerts_max: "Max alerts",
+    close: "Close",
+    no_alert_details: "No further details available.",
+    alert_period: "Period",
     prev: "Prev",
     next: "Next",
     line_filter: "Line filter",
@@ -196,6 +202,9 @@ const TEXTS = {
     show_alerts: "Amosar alertas",
     alerts_only_main_line: "S\u00f3 li\u00f1a principal",
     alerts_max: "Max avisos",
+    close: "Pechar",
+    no_alert_details: "Sen máis información dispoñible.",
+    alert_period: "Período",
     prev: "Ant.",
     next: "Seg.",
     line_filter: "Filtro de li\u00f1a",
@@ -342,6 +351,29 @@ function formatUpdatedAt(value, locale) {
 
   const localeTag = locale === "gl" ? "gl-ES" : locale === "es" ? "es-ES" : "en-GB";
   return date.toLocaleTimeString(localeTag, { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatAlertDate(value, locale) {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const localeTag = locale === "gl" ? "gl-ES" : locale === "es" ? "es-ES" : "en-GB";
+  return date.toLocaleDateString(localeTag, { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function formatAlertDateRange(alert, locale) {
+  const start = formatAlertDate(alert?.inicio, locale);
+  const end = formatAlertDate(alert?.fin, locale);
+  if (start && end && start !== end) {
+    return `${start} – ${end}`;
+  }
+  return start || end || null;
 }
 
 function getBaseStopKey(entityId) {
@@ -954,6 +986,8 @@ class VigoBusCard extends HTMLElement {
     this._deviceLocationState = null;
     this._deviceLocationTimer = null;
     this._busPage = {};
+    this._openAlert = null;
+    this._alertLookup = new Map();
     this.attachShadow({ mode: "open" });
   }
 
@@ -1250,6 +1284,22 @@ class VigoBusCard extends HTMLElement {
     this._render();
   }
 
+  _registerAlert(alert) {
+    const key = `alert-${this._alertLookup.size}`;
+    this._alertLookup.set(key, alert);
+    return key;
+  }
+
+  _openAlertModal(alert) {
+    this._openAlert = alert;
+    this._render();
+  }
+
+  _closeAlertModal() {
+    this._openAlert = null;
+    this._render();
+  }
+
   _renderBusList(key, allBuses, pageSize, locale, styleKey) {
     const style = CARD_STYLES[styleKey] || CARD_STYLES.bold;
     const buses = Array.isArray(allBuses) ? allBuses : [];
@@ -1372,7 +1422,7 @@ class VigoBusCard extends HTMLElement {
             ? `<div class="next-list secondary-alerts">
                 <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 2px;">${escapeHtml(t(locale, "alerts"))}</div>
                 ${filteredAlerts.map((item) => `
-                  <div class="next-item alert-item">
+                  <div class="next-item alert-item" data-alert-key="${escapeHtml(this._registerAlert(item))}" role="button" tabindex="0">
                     <strong>!</strong>
                     <span class="alert-title">${escapeHtml(item?.title || "-")}</span>
                     <span class="alert-lines">${escapeHtml(item?.lineas || "")}</span>
@@ -1460,6 +1510,7 @@ class VigoBusCard extends HTMLElement {
       return;
     }
 
+    this._alertLookup = new Map();
     const locale = getLocale(this._config, this._hass);
     const groups = sortGroupsForDisplay(buildSelectedGroups(this._hass, this._config));
     const primaryGroup = getPrimaryGroup(groups, this._config.primary_entity);
@@ -1843,6 +1894,83 @@ class VigoBusCard extends HTMLElement {
           white-space: nowrap;
         }
 
+        .alert-item {
+          cursor: pointer;
+          transition: background 0.15s ease;
+        }
+
+        .alert-item:hover,
+        .alert-item:focus-visible {
+          background: var(--vigobus-veil);
+          outline: none;
+        }
+
+        .alert-modal-backdrop {
+          position: fixed;
+          inset: 0;
+          z-index: 1000;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+          box-sizing: border-box;
+          background: rgba(0, 0, 0, 0.5);
+        }
+
+        .alert-modal {
+          position: relative;
+          width: 100%;
+          max-width: 360px;
+          max-height: 80vh;
+          overflow-y: auto;
+          box-sizing: border-box;
+          padding: 20px;
+          border-radius: 16px;
+          background: var(--vigobus-bg);
+          border: 1px solid var(--vigobus-divider);
+          box-shadow: 0 20px 48px rgba(0, 0, 0, 0.35);
+          color: var(--vigobus-text);
+        }
+
+        .alert-modal-close {
+          position: absolute;
+          top: 10px;
+          right: 10px;
+          width: 28px;
+          height: 28px;
+          border: none;
+          border-radius: 999px;
+          background: var(--vigobus-veil);
+          color: var(--vigobus-text);
+          font-size: 18px;
+          line-height: 1;
+          cursor: pointer;
+        }
+
+        .alert-modal-close:hover {
+          background: var(--vigobus-veil-strong);
+        }
+
+        .alert-modal-title {
+          font-weight: 800;
+          font-size: 16px;
+          padding-right: 24px;
+          margin-bottom: 10px;
+        }
+
+        .alert-modal-meta {
+          font-size: 13px;
+          color: var(--vigobus-muted);
+          margin-bottom: 6px;
+        }
+
+        .alert-modal-body {
+          margin-top: 10px;
+          font-size: 13px;
+          line-height: 1.5;
+          white-space: pre-line;
+        }
+
         .section {
           padding: 0 20px 20px;
         }
@@ -2185,7 +2313,7 @@ class VigoBusCard extends HTMLElement {
             ${this._config.show_alerts ? `<div class="next-list">
               <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 4px;">${escapeHtml(t(locale, "alerts"))}</div>
               ${visibleAlerts.length ? visibleAlerts.map((alert) => `
-                <div class="next-item alert-item">
+                <div class="next-item alert-item" data-alert-key="${escapeHtml(this._registerAlert(alert))}" role="button" tabindex="0">
                   <strong>!</strong>
                   <span class="alert-title">${escapeHtml(alert?.title || "-")}</span>
                   <span class="alert-lines">${escapeHtml(alert?.lineas || "")}</span>
@@ -2218,6 +2346,18 @@ class VigoBusCard extends HTMLElement {
             stops_count: ${escapeHtml(primaryGroup.entity?.attributes?.stops_count ?? "-")}
           </div>
         ` : ""}
+
+        ${this._openAlert ? `
+          <div class="alert-modal-backdrop" data-alert-backdrop>
+            <div class="alert-modal" role="dialog" aria-modal="true">
+              <button type="button" class="alert-modal-close" data-alert-close aria-label="${escapeHtml(t(locale, "close"))}">&times;</button>
+              <div class="alert-modal-title">${escapeHtml(this._openAlert.title || "-")}</div>
+              ${this._openAlert.lineas ? `<div class="alert-modal-meta">${escapeHtml(t(locale, "line"))}: <b>${escapeHtml(this._openAlert.lineas)}</b></div>` : ""}
+              ${formatAlertDateRange(this._openAlert, locale) ? `<div class="alert-modal-meta">${escapeHtml(t(locale, "alert_period"))}: <b>${escapeHtml(formatAlertDateRange(this._openAlert, locale))}</b></div>` : ""}
+              <div class="alert-modal-body">${escapeHtml(this._openAlert.description || t(locale, "no_alert_details"))}</div>
+            </div>
+          </div>
+        ` : ""}
       </ha-card>
     `;
 
@@ -2238,6 +2378,33 @@ class VigoBusCard extends HTMLElement {
       });
     });
 
+    this.shadowRoot.querySelectorAll(".alert-item[data-alert-key]").forEach((el) => {
+      const openThisAlert = () => {
+        const alert = this._alertLookup.get(el.dataset.alertKey);
+        if (alert) {
+          this._openAlertModal(alert);
+        }
+      };
+      el.addEventListener("click", openThisAlert);
+      el.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          openThisAlert();
+        }
+      });
+    });
+
+    this.shadowRoot.querySelectorAll("[data-alert-backdrop]").forEach((backdrop) => {
+      backdrop.addEventListener("click", (ev) => {
+        if (ev.target === backdrop) {
+          this._closeAlertModal();
+        }
+      });
+    });
+
+    this.shadowRoot.querySelectorAll("[data-alert-close]").forEach((button) => {
+      button.addEventListener("click", () => this._closeAlertModal());
+    });
   }
 }
 
