@@ -156,6 +156,13 @@ This isn't a one-off popup — the active trip stays shown for this browser
 (survives a dashboard reload) until you tap "Cancelar" or its arrival time
 passes, whichever comes first.
 
+While a trip stays active, a separate green dot tracks your actual live
+position on that same map, re-read every few seconds and moved in place as
+you walk or ride — the blue/red pins mark the plan's fixed start and end,
+this one is you, right now. It reuses the same geolocation/`person`
+fallback as everything else in this card, so it needs no extra permission
+beyond what "My location" and the trip search already ask for.
+
 The map is drawn with [MapLibre GL JS](https://maplibre.org/) and
 [OpenFreeMap](https://openfreemap.org) tiles, both loaded from a public CDN
 only while the trip planner is in use — no map library is bundled into the

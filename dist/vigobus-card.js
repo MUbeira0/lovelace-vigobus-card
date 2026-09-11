@@ -8,6 +8,13 @@ const STOP_SLOT_COUNT = 6;
 const TRIP_ACTIVE_STORAGE_KEY = "vigobus-active-trip";
 const TRIP_ACTIVE_GRACE_MS = 10 * 60 * 1000; // keep it visible a bit past arrival
 
+// While a trip is active, the viewer's own position is re-read on this
+// interval and pushed straight onto the existing map/marker (see
+// _updateTripLiveMarker) instead of going through a full _render() — a
+// full re-render would tear down and recreate the whole MapLibre instance
+// every tick, losing whatever pan/zoom the viewer had and flickering.
+const TRIP_LIVE_LOCATION_REFRESH_MS = 8000;
+
 // Raw tile.openstreetmap.org tiles explicitly disallow this exact usage
 // pattern (many independent installs of the same distributed app all
 // hitting their servers) — see https://wiki.openstreetmap.org/Blocked.
@@ -114,6 +121,7 @@ const TEXTS = {
     trip_walk_from: "Camina desde",
     trip_osm_attribution: "Búsqueda de lugares © colaboradores de OpenStreetMap",
     trip_map_attribution: "Mapa: OpenFreeMap © OpenMapTiles · Datos de OpenStreetMap",
+    trip_live_location_hint: "El punto verde es tu ubicación en este momento y se actualiza sola mientras te mueves.",
   },
   en: {
     unknown: "Unknown",
@@ -212,6 +220,7 @@ const TEXTS = {
     trip_walk_from: "Walk from",
     trip_osm_attribution: "Place search © OpenStreetMap contributors",
     trip_map_attribution: "Map: OpenFreeMap © OpenMapTiles · Data from OpenStreetMap",
+    trip_live_location_hint: "The green dot is your current location and updates on its own as you move.",
   },
   gl: {
     unknown: "Desco\u00f1ecido",
@@ -310,6 +319,7 @@ const TEXTS = {
     trip_walk_from: "Camiña desde",
     trip_osm_attribution: "Busca de lugares © colaboradores de OpenStreetMap",
     trip_map_attribution: "Mapa: OpenFreeMap © OpenMapTiles · Datos de OpenStreetMap",
+    trip_live_location_hint: "O punto verde é a túa localización neste momento e actualízase soa mentres te moves.",
   },
 };
 
@@ -1166,6 +1176,9 @@ class VigoBusCard extends HTMLElement {
     };
     this._tripSearchToken = 0;
     this._tripMapInstance = null;
+    this._tripLiveLocation = null;
+    this._tripLiveMarker = null;
+    this._tripLiveLocationTimer = null;
     this.attachShadow({ mode: "open" });
   }
 
@@ -1234,10 +1247,12 @@ class VigoBusCard extends HTMLElement {
 
   connectedCallback() {
     this._syncDeviceLocationLoop();
+    this._syncTripLiveLocationLoop();
   }
 
   disconnectedCallback() {
     this._stopDeviceLocationLoop();
+    this._stopTripLiveLocationLoop();
   }
 
   _syncDeviceLocationLoop() {
@@ -1277,6 +1292,73 @@ class VigoBusCard extends HTMLElement {
     if (this._visibilityHandler) {
       document.removeEventListener("visibilitychange", this._visibilityHandler);
       this._visibilityHandler = null;
+    }
+  }
+
+  // While a trip is active, keep re-reading the viewer's own position and
+  // move a dedicated marker on the trip map as they actually move — this is
+  // separate from _syncDeviceLocationLoop (which drives the "my location"
+  // nearest-stop section, not the trip map) and updates the map in place
+  // (see _updateTripLiveMarker) rather than forcing a full _render() on
+  // every tick.
+  _syncTripLiveLocationLoop() {
+    if (!this._tripState?.active || !this.isConnected) {
+      this._stopTripLiveLocationLoop();
+      return;
+    }
+
+    if (this._tripLiveLocationTimer) {
+      return;
+    }
+
+    this._refreshTripLiveLocation();
+    this._tripLiveLocationTimer = setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      this._refreshTripLiveLocation();
+    }, TRIP_LIVE_LOCATION_REFRESH_MS);
+  }
+
+  _stopTripLiveLocationLoop() {
+    if (this._tripLiveLocationTimer) {
+      clearInterval(this._tripLiveLocationTimer);
+      this._tripLiveLocationTimer = null;
+    }
+    this._tripLiveLocation = null;
+    this._tripLiveMarker = null;
+  }
+
+  _refreshTripLiveLocation() {
+    if (!navigator.geolocation) {
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        this._tripLiveLocation = { lat: position.coords.latitude, lon: position.coords.longitude };
+        this._updateTripLiveMarker();
+      },
+      () => {
+        // Permission denied, unavailable, timed out, etc. — the rest of the
+        // active trip view (map, legs, times) still works without this dot.
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+    );
+  }
+
+  // Pushes the last-read position onto the already-rendered map directly,
+  // without going through _render() (see TRIP_LIVE_LOCATION_REFRESH_MS).
+  // Safe to call before the map exists yet (_syncTripMap adds the marker
+  // itself once it does, from the same this._tripLiveLocation).
+  _updateTripLiveMarker() {
+    if (!this._tripMapInstance || !this._tripLiveLocation || !window.maplibregl) {
+      return;
+    }
+    const { lat, lon } = this._tripLiveLocation;
+    if (this._tripLiveMarker) {
+      this._tripLiveMarker.setLngLat([lon, lat]);
+    } else {
+      this._tripLiveMarker = new window.maplibregl.Marker({ color: "#1db954" })
+        .setLngLat([lon, lat])
+        .addTo(this._tripMapInstance);
     }
   }
 
@@ -1901,6 +1983,10 @@ class VigoBusCard extends HTMLElement {
       }
       this._tripMapInstance = null;
     }
+    // The live marker belongs to the map instance just disposed above — it
+    // gets re-added (from this._tripLiveLocation, if already known) once the
+    // new map finishes loading below.
+    this._tripLiveMarker = null;
 
     const active = this._tripState.active;
     if (!active) {
@@ -1977,6 +2063,7 @@ class VigoBusCard extends HTMLElement {
           new maplibregl.Marker({ color: "#e34948" })
             .setLngLat([destinationPoint.lon, destinationPoint.lat])
             .addTo(map);
+          this._updateTripLiveMarker();
 
           if (Number.isFinite(minLon)) {
             map.fitBounds(
@@ -2094,6 +2181,7 @@ class VigoBusCard extends HTMLElement {
           <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@${MAPLIBRE_VERSION}/dist/maplibre-gl.css">
           <div class="trip-map" data-trip-map></div>
           <div class="meta" style="margin-top: 4px;">${escapeHtml(t(locale, "trip_map_attribution"))}</div>
+          <div class="meta">${escapeHtml(t(locale, "trip_live_location_hint"))}</div>
           <div class="next-list" style="margin-top: 8px;">
             ${(itinerary.legs || []).map((leg) => this._renderTripLeg(leg, locale)).join("")}
           </div>
@@ -2175,6 +2263,7 @@ class VigoBusCard extends HTMLElement {
       this._tripState = { ...this._tripState, active: null };
       this._clearSavedActiveTrip();
     }
+    this._syncTripLiveLocationLoop();
 
     this._alertLookup = new Map();
     const locale = getLocale(this._config, this._hass);
