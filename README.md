@@ -142,12 +142,26 @@ address. Picking one immediately plans the trip using your device's live
 location as the origin (same geolocation/`person` fallback as "My location"
 above), and shows every reasonable route option Moovit/Google Maps-style —
 not just the fastest one — as its own row: depart/arrive times, total
-duration, transfer count, and line badges. Tap a row to see its full
-walk/bus leg breakdown. Click "Cambiar destino" to search again.
+duration, transfer count, and line badges.
+
+Tapping a row **activates** that trip: it replaces the search UI with a map
+(walk legs dashed, each bus leg colored like its line badge, a blue dot for
+your start and a red one for the destination) plus the full walk/bus leg
+breakdown, including a live-arrival note on the first leg when it's coming
+up soon. This isn't a one-off popup — the active trip stays shown for this
+browser (survives a dashboard reload) until you tap "Cancelar" or its
+arrival time passes, whichever comes first.
+
+The map is drawn with [Leaflet](https://leafletjs.com/) and OpenStreetMap
+tiles, both loaded from a public CDN only while the trip planner is in use —
+no map library is bundled into the card. Segments are straight lines between
+stops (no turn-by-turn road geometry is available), which is enough to see
+the shape of the trip at a glance.
 
 Because destination search sends what you type to OpenStreetMap's public
 Nominatim service, results are attributed to "OpenStreetMap contributors"
-right in the search UI, as their usage policy requires.
+right in the search UI, as their usage policy requires; the map tiles carry
+the same attribution.
 
 Known limitations (shared with the backend): only the itinerary's first bus
 leg is cross-checked against live arrival data, the rest is timetable-only;

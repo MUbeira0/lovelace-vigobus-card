@@ -49,6 +49,26 @@ class FakeHTMLElement {
 const definedElements = {};
 let lastCreatedTag = null;
 
+class FakeLocalStorage {
+  constructor() {
+    this._data = new Map();
+  }
+  getItem(key) {
+    return this._data.has(key) ? this._data.get(key) : null;
+  }
+  setItem(key, value) {
+    this._data.set(key, String(value));
+  }
+  removeItem(key) {
+    this._data.delete(key);
+  }
+  clear() {
+    this._data.clear();
+  }
+}
+
+const fakeLocalStorage = new FakeLocalStorage();
+
 const sandbox = {
   window: { customCards: [] },
   HTMLElement: FakeHTMLElement,
@@ -66,8 +86,12 @@ const sandbox = {
     addEventListener: () => {},
     removeEventListener: () => {},
     visibilityState: "visible",
+    // No `head` on purpose: it makes ensureLeafletLoaded() short-circuit
+    // (see the guard in vigobus-card.js) instead of the test suite ever
+    // actually trying to load the Leaflet CDN script over the network.
   },
   navigator: {},
+  localStorage: fakeLocalStorage,
   console,
 };
 vm.createContext(sandbox);
@@ -404,6 +428,48 @@ assertEqual(
   "normalizePlanTripResponse reports trip_error for a missing response"
 );
 
+// buildTripMapPoints: turns an itinerary's legs into the straight-line map
+// segments drawn on the active-trip map (no real road/route geometry is
+// available — see gtfs.py's shapes.txt note — so each leg is just a line
+// between its two endpoints).
+const mapItinerary = {
+  legs: [
+    { mode: "walk", to_stop: { latitude: 42.01, longitude: -8.01 }, duration_min: 3 },
+    {
+      mode: "bus",
+      line: "C1",
+      line_color: "#ED4713",
+      from_stop: { latitude: 42.01, longitude: -8.01 },
+      to_stop: { latitude: 42.02, longitude: -8.02 },
+    },
+    { mode: "walk", from_stop: { latitude: 42.02, longitude: -8.02 }, duration_min: 2 },
+  ],
+};
+const mapResult = {
+  origin: { latitude: 42.0, longitude: -8.0 },
+  destination: { latitude: 42.03, longitude: -8.03 },
+};
+const mapSegments = sandbox.buildTripMapPoints(mapResult, mapItinerary);
+assertEqual(mapSegments.length, 3, "buildTripMapPoints emits one segment per leg");
+assertEqual(
+  mapSegments[0].coords,
+  [{ lat: 42.0, lon: -8.0 }, { lat: 42.01, lon: -8.01 }],
+  "the first (walk) segment runs from the origin to the first boarding stop"
+);
+assertEqual(mapSegments[0].mode, "walk", "a walk leg is tagged as such for dashed styling");
+assertEqual(mapSegments[1].color, "#ED4713", "a bus leg uses that line's own badge color");
+assertEqual(
+  mapSegments[2].coords,
+  [{ lat: 42.02, lon: -8.02 }, { lat: 42.03, lon: -8.03 }],
+  "the last (walk) segment runs from the alighting stop to the destination"
+);
+
+assertEqual(
+  sandbox.buildTripMapPoints({}, { legs: [{ mode: "bus", from_stop: null, to_stop: null }] }),
+  [],
+  "buildTripMapPoints skips a leg missing coordinates instead of crashing"
+);
+
 const tripServiceCalls = [];
 const tripCardInstance = new CardClass();
 tripCardInstance.setConfig({
@@ -561,30 +627,103 @@ async function runTripPlannerAsyncTests() {
     "leg-level detail (stop names, per-leg times) is NOT shown until a summary row is opened"
   );
 
-  tripCardInstance._openTripItineraryDetail(0);
-  const detailHtml = tripCardInstance.shadowRoot.innerHTML;
-  assertTrue(
-    detailHtml.includes("data-trip-backdrop") &&
-      detailHtml.includes("Parada A") &&
-      detailHtml.includes("Parada B") &&
-      detailHtml.includes("08:03") &&
-      detailHtml.includes("08:15"),
-    "opening a summary row shows the full leg detail (stops and times) in a modal"
-  );
-  assertTrue(/5 min/.test(detailHtml), "a live leg shows its live minutes in the detail modal");
+  // --- selecting an option activates it: it replaces the search/list UI
+  // (not a temporary popup), shows a map placeholder, and persists to this
+  // browser's storage so it survives a dashboard reload, until cancelled or
+  // its arrival time passes.
 
-  tripCardInstance._openTripItineraryDetail(1);
-  const secondDetailHtml = tripCardInstance.shadowRoot.innerHTML;
-  assertTrue(
-    secondDetailHtml.includes("Parada C") && !secondDetailHtml.includes("Parada A"),
-    "opening a different summary row shows that itinerary's own legs, not the first one's"
+  tripCardInstance._activateTripItinerary(0);
+  assertEqual(
+    tripCardInstance._tripState.active?.itinerary?.arrive,
+    "08:20",
+    "_activateTripItinerary stores the picked itinerary as the active trip"
   );
 
-  tripCardInstance._closeTripItineraryDetail();
+  const activeHtml = tripCardInstance.shadowRoot.innerHTML;
   assertTrue(
-    !tripCardInstance.shadowRoot.innerHTML.includes("data-trip-backdrop"),
-    "closing the detail modal removes it from the rendered output"
+    activeHtml.includes("data-trip-cancel") &&
+      activeHtml.includes("data-trip-map") &&
+      activeHtml.includes("Parada A") &&
+      activeHtml.includes("Parada B") &&
+      activeHtml.includes("08:03") &&
+      activeHtml.includes("08:15"),
+    "the active trip view shows a cancel button, a map placeholder, and the full leg detail directly (no popup)"
   );
+  assertTrue(/5 min/.test(activeHtml), "a live leg shows its live minutes in the active trip view");
+  assertTrue(
+    !activeHtml.includes("data-trip-query") && !activeHtml.includes('data-trip-itinerary-index="1"'),
+    "the search box and the other option are hidden while a trip is active"
+  );
+
+  const savedRaw = fakeLocalStorage.getItem("vigobus-active-trip");
+  assertTrue(Boolean(savedRaw), "the active trip is persisted to localStorage");
+  const saved = JSON.parse(savedRaw);
+  assertEqual(saved.itinerary.arrive, "08:20", "the persisted trip is the one that was activated");
+  assertTrue(saved.expiresAt > Date.now(), "the persisted trip carries a future expiry timestamp");
+
+  // A fresh card instance (simulating a dashboard reload) should restore the
+  // still-active trip from storage without the viewer searching again.
+  const reloadedInstance = new CardClass();
+  reloadedInstance.setConfig({
+    title: "VigoBus",
+    stops: [{ entity: "sensor.vigobus_nearest", title: "" }],
+    trip_planner_mode: true,
+  });
+  reloadedInstance.hass = { language: "es", states: {} };
+  assertEqual(
+    reloadedInstance._tripState.active?.itinerary?.arrive,
+    "08:20",
+    "a new card instance restores the still-active trip from localStorage on load"
+  );
+  assertTrue(
+    reloadedInstance.shadowRoot.innerHTML.includes("data-trip-cancel"),
+    "the restored trip renders as the active view immediately, without a fresh search"
+  );
+
+  reloadedInstance._cancelActiveTrip();
+  assertEqual(reloadedInstance._tripState.active, null, "_cancelActiveTrip clears the in-memory active trip");
+  assertEqual(
+    fakeLocalStorage.getItem("vigobus-active-trip"),
+    null,
+    "_cancelActiveTrip removes the persisted trip too"
+  );
+  assertTrue(
+    reloadedInstance.shadowRoot.innerHTML.includes("data-trip-query"),
+    "cancelling returns to the destination search UI"
+  );
+
+  // An expired trip (arrival time already passed) must not be restored, and
+  // must not linger in storage either.
+  fakeLocalStorage.setItem(
+    "vigobus-active-trip",
+    JSON.stringify({ itinerary: { arrive: "01:00", legs: [] }, expiresAt: Date.now() - 1000 })
+  );
+  const afterExpiryInstance = new CardClass();
+  assertEqual(
+    afterExpiryInstance._tripState.active,
+    null,
+    "a trip whose expiry has already passed is not restored on load"
+  );
+  assertEqual(
+    fakeLocalStorage.getItem("vigobus-active-trip"),
+    null,
+    "loading an expired trip also clears it from storage"
+  );
+
+  // An already-active trip must also auto-clear once its expiry passes
+  // while the card stays open (not just on the next full reload).
+  tripCardInstance._tripState = {
+    ...tripCardInstance._tripState,
+    active: { itinerary: { arrive: "01:00", legs: [] }, expiresAt: Date.now() - 1000 },
+  };
+  tripCardInstance._render();
+  assertEqual(
+    tripCardInstance._tripState.active,
+    null,
+    "_render() clears an active trip whose arrival time has passed"
+  );
+
+  fakeLocalStorage.clear();
 }
 
 // --- mobile overflow fix: CSS regression guard ------------------------------
