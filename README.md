@@ -127,9 +127,11 @@ Set `trip_planner_mode: true` (toggle in the card's visual editor, under
 "Planificador de viaje") to add a section that plans a real bus trip — with
 transfers — from your current location to an address or named place (a
 school, a shopping mall, a hospital) you search for. It requires the
-`vigobus-integration` backend (v2.15.0+) for the stateless `vigobus.geocode`
-and `vigobus.plan_trip` services; `geocode` uses OpenStreetMap's public
-Nominatim service to turn what you typed into coordinates.
+`vigobus-integration` backend (v2.15.0+, or v2.17.0+ for the optional
+OpenRouteService walking directions below) for the stateless
+`vigobus.geocode` and `vigobus.plan_trip` services; `geocode` uses
+OpenStreetMap's public Nominatim service to turn what you typed into
+coordinates.
 
 ```yaml
 type: custom:vigobus-card
@@ -161,9 +163,17 @@ card. OpenFreeMap (not the raw `tile.openstreetmap.org` server) is used
 specifically because OpenStreetMap's own tile usage policy explicitly
 disallows exactly this pattern — many independent installations of the same
 distributed app hitting their servers — and blocks it; OpenFreeMap is a
-free, keyless alternative built for this case. Walk legs are still a
-straight line between their two endpoints, since no free/keyless
-walking-directions service was available to route those too.
+free, keyless alternative built for this case. Walk legs are a straight
+line between their two endpoints by default, since no free/keyless
+walking-directions service exists — but set `trip_planner_ors_api_key` to
+your own free [OpenRouteService](https://openrouteservice.org/dev) key
+(also settable in the visual editor, under "Planificador de viaje") to
+have the first and last walk legs follow real streets too, the same way
+bus legs already do. Unlike the map tiles or the geocoder, this can't be a
+key shared by every install of this card — ORS's free tier is per-key
+(2000 requests/day), so each user registers their own for their own
+personal use. No key, no request: the card falls back to a straight line
+exactly as before.
 
 Because destination search sends what you type to OpenStreetMap's public
 Nominatim service, results are attributed to "OpenStreetMap contributors"

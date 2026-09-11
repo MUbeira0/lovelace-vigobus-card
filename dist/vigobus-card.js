@@ -95,6 +95,8 @@ const TEXTS = {
     card_style_bold: "Bus urbano (Transit)",
     trip_planner_title: "Planificador de viaje",
     trip_planner_enable: "Activar planificador de viaje",
+    trip_planner_ors_key: "Clave de OpenRouteService (opcional)",
+    trip_planner_ors_key_hint: "Si la indicas, los tramos a pie también seguirán las calles reales en vez de una línea recta. Consigue una gratis en openrouteservice.org/dev.",
     trip_destination: "Destino",
     trip_destination_placeholder: "Busca una dirección o un lugar (colegio, centro comercial…)",
     trip_search_button: "Buscar",
@@ -191,6 +193,8 @@ const TEXTS = {
     card_style_bold: "Urban bus (Transit)",
     trip_planner_title: "Trip planner",
     trip_planner_enable: "Enable trip planner",
+    trip_planner_ors_key: "OpenRouteService API key (optional)",
+    trip_planner_ors_key_hint: "When set, walking legs also follow real streets instead of a straight line. Get a free key at openrouteservice.org/dev.",
     trip_destination: "Destination",
     trip_destination_placeholder: "Search for an address or place (school, mall…)",
     trip_search_button: "Search",
@@ -287,6 +291,8 @@ const TEXTS = {
     card_style_bold: "Bus urbano (Transit)",
     trip_planner_title: "Planificador de viaxe",
     trip_planner_enable: "Activar planificador de viaxe",
+    trip_planner_ors_key: "Clave de OpenRouteService (opcional)",
+    trip_planner_ors_key_hint: "Se a indicas, os tramos a pé tamén seguirán as rúas reais en vez dunha liña recta. Consegue unha gratis en openrouteservice.org/dev.",
     trip_destination: "Destino",
     trip_destination_placeholder: "Busca un enderezo ou un lugar (colexio, centro comercial…)",
     trip_search_button: "Buscar",
@@ -471,12 +477,12 @@ function _latLon(ref) {
 }
 
 // Builds the polyline segments for the active-trip map: one per leg, walk
-// legs dashed and gray (no free/keyless walking-routing service is used, so
-// these stay a straight line between their two endpoints), bus legs solid
-// in that line's own badge color and following the real street shape from
-// the GTFS feed (leg.shape, see trip_planner.py's _leg_shape) when the
-// backend found one — falling back to a straight line otherwise (a trip
-// missing its shape_id, or an older backend before this was added).
+// legs dashed and gray, bus legs solid in that line's own badge color. Each
+// leg follows its real street geometry (leg.shape — a bus leg's from the
+// GTFS feed's shapes.txt, a walk leg's from OpenRouteService when the
+// backend was given an ors_api_key) when the backend found one — falling
+// back to a straight line between the leg's two endpoints otherwise (no key
+// configured, a trip missing its shape_id, or an older backend before this).
 function buildTripMapPoints(result, itinerary) {
   const origin = _latLon(result?.origin);
   const destination = _latLon(result?.destination);
@@ -489,7 +495,7 @@ function buildTripMapPoints(result, itinerary) {
     const to = _latLon(leg.to_stop) || destination;
     if (from && to) {
       const shapeCoords =
-        leg.mode === "bus" && Array.isArray(leg.shape) && leg.shape.length >= 2
+        Array.isArray(leg.shape) && leg.shape.length >= 2
           ? leg.shape.map((point) => ({ lat: point[0], lon: point[1] }))
           : null;
       segments.push({
@@ -1108,6 +1114,7 @@ class VigoBusCard extends HTMLElement {
       device_location_refresh_seconds: 20,
       device_location_source: "auto",
       trip_planner_mode: false,
+      trip_planner_ors_api_key: "",
       stops: [{ entity: "sensor.vigobus_nearest", title: "", line: "" }],
     };
   }
@@ -1140,6 +1147,7 @@ class VigoBusCard extends HTMLElement {
       device_location_refresh_seconds: 20,
       device_location_source: "auto",
       trip_planner_mode: false,
+      trip_planner_ors_api_key: "",
       stops: [],
     };
     this._deviceLocationState = null;
@@ -1191,6 +1199,9 @@ class VigoBusCard extends HTMLElement {
         ? String(config.device_location_source ?? this._config.device_location_source ?? "auto").toLowerCase()
         : "auto",
       trip_planner_mode: Boolean(config.trip_planner_mode ?? this._config.trip_planner_mode ?? false),
+      trip_planner_ors_api_key: String(
+        config.trip_planner_ors_api_key ?? this._config.trip_planner_ors_api_key ?? ""
+      ).trim(),
       stops: normalizeConfiguredStops(config),
     };
     this._syncDeviceLocationLoop();
@@ -1782,6 +1793,9 @@ class VigoBusCard extends HTMLElement {
           origin_longitude: coords.lon,
           destination_latitude: destination.latitude,
           destination_longitude: destination.longitude,
+          ...(this._config.trip_planner_ors_api_key
+            ? { ors_api_key: this._config.trip_planner_ors_api_key }
+            : {}),
         },
         return_response: true,
       });
@@ -3246,6 +3260,7 @@ class VigoBusCardEditor extends HTMLElement {
       device_location_refresh_seconds: 20,
       device_location_source: "auto",
       trip_planner_mode: false,
+      trip_planner_ors_api_key: "",
       stops: [],
       ...config,
     };
@@ -3550,6 +3565,11 @@ class VigoBusCardEditor extends HTMLElement {
             <ha-switch id="trip_planner_mode"></ha-switch>
             <span>${escapeHtml(t(locale, "trip_planner_enable"))}</span>
           </label>
+          <ha-textfield
+            id="trip_planner_ors_api_key"
+            label="${escapeHtml(t(locale, "trip_planner_ors_key"))}"
+          ></ha-textfield>
+          <div class="hint">${escapeHtml(t(locale, "trip_planner_ors_key_hint"))}</div>
         </div>
 
         <div class="row">
@@ -3581,6 +3601,7 @@ class VigoBusCardEditor extends HTMLElement {
     const deviceLocationRefreshSeconds = this.shadowRoot.getElementById("device_location_refresh_seconds");
     const deviceLocationSource = this.shadowRoot.getElementById("device_location_source");
     const tripPlannerMode = this.shadowRoot.getElementById("trip_planner_mode");
+    const tripPlannerOrsApiKey = this.shadowRoot.getElementById("trip_planner_ors_api_key");
     const addStop = this.shadowRoot.getElementById("add-stop");
     const stopsList = this.shadowRoot.getElementById("stops-list");
 
@@ -3649,6 +3670,9 @@ class VigoBusCardEditor extends HTMLElement {
     }
     if (tripPlannerMode) {
       tripPlannerMode.checked = Boolean(config.trip_planner_mode ?? false);
+    }
+    if (tripPlannerOrsApiKey) {
+      tripPlannerOrsApiKey.value = config.trip_planner_ors_api_key || "";
     }
 
     if (stopsList) {
@@ -3720,6 +3744,9 @@ class VigoBusCardEditor extends HTMLElement {
     deviceLocationRefreshSeconds?.addEventListener("input", (ev) => this._emitConfig({ device_location_refresh_seconds: Number(ev.target.value) || 45 }));
     deviceLocationSource?.addEventListener("change", (ev) => this._emitConfig({ device_location_source: ev.target.value || "auto" }));
     tripPlannerMode?.addEventListener("change", (ev) => this._emitConfig({ trip_planner_mode: ev.target.checked }));
+    tripPlannerOrsApiKey?.addEventListener("input", (ev) =>
+      this._emitConfig({ trip_planner_ors_api_key: ev.target.value })
+    );
     addStop?.addEventListener("click", () => this._addStop());
   }
 }

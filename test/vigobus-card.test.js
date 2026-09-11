@@ -652,6 +652,21 @@ async function runTripPlannerAsyncTests() {
     42.0,
     "_planTrip falls back to the viewer's person entity when there's no browser geolocation"
   );
+  assertEqual(
+    planCall?.service_data?.ors_api_key,
+    undefined,
+    "_planTrip omits ors_api_key when no OpenRouteService key is configured"
+  );
+
+  tripCardInstance._config.trip_planner_ors_api_key = "fake-ors-key";
+  await tripCardInstance._planTrip();
+  const planCallWithKey = tripServiceCalls.filter((call) => call.service === "plan_trip").pop();
+  assertEqual(
+    planCallWithKey?.service_data?.ors_api_key,
+    "fake-ors-key",
+    "_planTrip forwards the configured OpenRouteService key as ors_api_key"
+  );
+  tripCardInstance._config.trip_planner_ors_api_key = "";
 
   const listHtml = tripCardInstance.shadowRoot.innerHTML;
   assertTrue(
