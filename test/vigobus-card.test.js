@@ -367,23 +367,25 @@ assertTrue(
 
 // --- trip planner ------------------------------------------------------------
 // Full journey planning (origin -> destination with transfers), backed by the
-// integration's new search_stops/plan_trip services. Gated behind its own
-// trip_planner_mode toggle (off by default) so it's opt-in per dashboard.
+// integration's geocode/plan_trip services. The destination is a free-text
+// address or named place (geocoded via OpenStreetMap's Nominatim), not a
+// specific bus stop. Gated behind its own trip_planner_mode toggle (off by
+// default) so it's opt-in per dashboard.
 
 assertEqual(
-  sandbox.normalizeStopSuggestions({ response: { stops: [{ id: "1", name: "A" }] } }),
-  [{ id: "1", name: "A" }],
-  "normalizeStopSuggestions extracts the stops array from a service response"
+  sandbox.normalizePlaceSuggestions({ response: { places: [{ name: "A", latitude: 1, longitude: 2 }] } }),
+  [{ name: "A", latitude: 1, longitude: 2 }],
+  "normalizePlaceSuggestions extracts the places array from a service response"
 );
 assertEqual(
-  sandbox.normalizeStopSuggestions({ response: {} }),
+  sandbox.normalizePlaceSuggestions({ response: {} }),
   [],
-  "normalizeStopSuggestions defaults to an empty list when stops is missing"
+  "normalizePlaceSuggestions defaults to an empty list when places is missing"
 );
 assertEqual(
-  sandbox.normalizeStopSuggestions(null),
+  sandbox.normalizePlaceSuggestions(null),
   [],
-  "normalizeStopSuggestions tolerates a null service response"
+  "normalizePlaceSuggestions tolerates a null service response"
 );
 
 assertEqual(
@@ -421,8 +423,19 @@ tripCardInstance.hass = {
   connection: {
     sendMessagePromise: async (message) => {
       tripServiceCalls.push(message);
-      if (message.service === "search_stops") {
-        return { response: { stops: [{ id: "6930", stop_id: "3493", name: "Praza de America" }] } };
+      if (message.service === "geocode") {
+        return {
+          response: {
+            places: [
+              {
+                name: "Colexio Alameda",
+                display_name: "Colexio Alameda, Rúa Example, Vigo, España",
+                latitude: 42.23,
+                longitude: -8.72,
+              },
+            ],
+          },
+        };
       }
       if (message.service === "plan_trip") {
         return {
@@ -479,6 +492,10 @@ assertTrue(
   /data-trip-query/.test(tripCardInstance.shadowRoot.innerHTML),
   "trip_planner_mode renders the destination search box"
 );
+assertTrue(
+  tripCardInstance.shadowRoot.innerHTML.includes("OpenStreetMap"),
+  "the destination search shows the OpenStreetMap attribution Nominatim's usage policy requires"
+);
 
 tripCardInstance._tripState.query = "praza";
 // A real chain of awaits (search -> plan), so this can't use the earlier
@@ -491,26 +508,37 @@ async function runTripPlannerAsyncTests() {
   await tripCardInstance._searchTripDestinations();
   assertEqual(
     tripCardInstance._tripState.suggestions,
-    [{ id: "6930", stop_id: "3493", name: "Praza de America" }],
-    "_searchTripDestinations populates suggestions from the search_stops service"
+    [{ name: "Colexio Alameda", display_name: "Colexio Alameda, Rúa Example, Vigo, España", latitude: 42.23, longitude: -8.72 }],
+    "_searchTripDestinations populates suggestions from the geocode service"
   );
   assertEqual(
     tripServiceCalls[0].service_data.query,
     "praza",
-    "_searchTripDestinations forwards the typed query to search_stops"
+    "_searchTripDestinations forwards the typed query to geocode"
+  );
+
+  const suggestionsHtml = tripCardInstance.shadowRoot.innerHTML;
+  assertTrue(
+    suggestionsHtml.includes("Colexio Alameda") && suggestionsHtml.includes("Rúa Example, Vigo"),
+    "a suggestion row shows both the place's short name and its full address"
   );
 
   tripCardInstance._tripState = {
     ...tripCardInstance._tripState,
-    destination: { id: "6930", stop_id: "3493", name: "Praza de America" },
+    destination: { name: "Colexio Alameda", latitude: 42.23, longitude: -8.72 },
   };
   await tripCardInstance._planTrip();
 
   const planCall = tripServiceCalls.find((call) => call.service === "plan_trip");
   assertEqual(
-    planCall?.service_data?.destination_stop_id,
-    "3493",
-    "_planTrip sends the GTFS stop_id (not the vitrasa id) as the destination"
+    planCall?.service_data?.destination_latitude,
+    42.23,
+    "_planTrip sends the geocoded place's coordinates as the destination, not a stop_id"
+  );
+  assertEqual(
+    planCall?.service_data?.destination_longitude,
+    -8.72,
+    "_planTrip sends the geocoded place's longitude too"
   );
   assertEqual(
     planCall?.service_data?.origin_latitude,

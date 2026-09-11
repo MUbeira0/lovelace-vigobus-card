@@ -82,7 +82,7 @@ const TEXTS = {
     trip_planner_title: "Planificador de viaje",
     trip_planner_enable: "Activar planificador de viaje",
     trip_destination: "Destino",
-    trip_destination_placeholder: "Busca una parada de destino…",
+    trip_destination_placeholder: "Busca una dirección o un lugar (colegio, centro comercial…)",
     trip_search_button: "Buscar",
     trip_searching: "Buscando paradas…",
     trip_change_destination: "Cambiar destino",
@@ -95,6 +95,7 @@ const TEXTS = {
     trip_transfers: "transbordos",
     trip_walk_to: "Camina hasta",
     trip_walk_from: "Camina desde",
+    trip_osm_attribution: "Búsqueda de lugares © colaboradores de OpenStreetMap",
   },
   en: {
     unknown: "Unknown",
@@ -175,7 +176,7 @@ const TEXTS = {
     trip_planner_title: "Trip planner",
     trip_planner_enable: "Enable trip planner",
     trip_destination: "Destination",
-    trip_destination_placeholder: "Search for a destination stop…",
+    trip_destination_placeholder: "Search for an address or place (school, mall…)",
     trip_search_button: "Search",
     trip_searching: "Searching stops…",
     trip_change_destination: "Change destination",
@@ -188,6 +189,7 @@ const TEXTS = {
     trip_transfers: "transfers",
     trip_walk_to: "Walk to",
     trip_walk_from: "Walk from",
+    trip_osm_attribution: "Place search © OpenStreetMap contributors",
   },
   gl: {
     unknown: "Desco\u00f1ecido",
@@ -268,7 +270,7 @@ const TEXTS = {
     trip_planner_title: "Planificador de viaxe",
     trip_planner_enable: "Activar planificador de viaxe",
     trip_destination: "Destino",
-    trip_destination_placeholder: "Busca unha parada de destino…",
+    trip_destination_placeholder: "Busca un enderezo ou un lugar (colexio, centro comercial…)",
     trip_search_button: "Buscar",
     trip_searching: "Buscando paradas…",
     trip_change_destination: "Cambiar destino",
@@ -281,6 +283,7 @@ const TEXTS = {
     trip_transfers: "transbordos",
     trip_walk_to: "Camiña até",
     trip_walk_from: "Camiña desde",
+    trip_osm_attribution: "Busca de lugares © colaboradores de OpenStreetMap",
   },
 };
 
@@ -424,9 +427,9 @@ function formatAlertDateRange(alert, locale) {
   return start || end || null;
 }
 
-function normalizeStopSuggestions(serviceResult) {
-  const stops = serviceResult?.response?.stops;
-  return Array.isArray(stops) ? stops : [];
+function normalizePlaceSuggestions(serviceResult) {
+  const places = serviceResult?.response?.places;
+  return Array.isArray(places) ? places : [];
 }
 
 function normalizePlanTripResponse(serviceResult) {
@@ -1642,12 +1645,12 @@ class VigoBusCard extends HTMLElement {
       const result = await this._hass.connection.sendMessagePromise({
         type: "call_service",
         domain: "vigobus",
-        service: "search_stops",
-        service_data: { query, limit: 8 },
+        service: "geocode",
+        service_data: { query, limit: 6, lang: getLocale(this._config, this._hass) },
         return_response: true,
       });
-      const stops = normalizeStopSuggestions(result);
-      this._tripState = { ...this._tripState, status: "idle", suggestions: stops };
+      const places = normalizePlaceSuggestions(result);
+      this._tripState = { ...this._tripState, status: "idle", suggestions: places };
     } catch (err) {
       this._tripState = { ...this._tripState, status: "idle", error: "trip_error" };
     }
@@ -1655,11 +1658,11 @@ class VigoBusCard extends HTMLElement {
   }
 
   _selectTripDestination(index) {
-    const stop = this._tripState.suggestions[index];
-    if (!stop) {
+    const place = this._tripState.suggestions[index];
+    if (!place) {
       return;
     }
-    this._tripState = { ...this._tripState, destination: stop, suggestions: [], query: "" };
+    this._tripState = { ...this._tripState, destination: place, suggestions: [], query: "" };
     this._planTrip();
   }
 
@@ -1698,7 +1701,8 @@ class VigoBusCard extends HTMLElement {
         service_data: {
           origin_latitude: coords.lat,
           origin_longitude: coords.lon,
-          destination_stop_id: destination.stop_id || destination.id,
+          destination_latitude: destination.latitude,
+          destination_longitude: destination.longitude,
         },
         return_response: true,
       });
@@ -1848,9 +1852,14 @@ class VigoBusCard extends HTMLElement {
               <div class="trip-suggestions">
                 ${state.suggestions
                   .map(
-                    (stop, index) => `
+                    (place, index) => `
                   <button type="button" class="trip-suggestion" data-trip-suggestion-index="${index}">
-                    ${escapeHtml(stop.name)}
+                    <span class="trip-suggestion-name">${escapeHtml(place.name)}</span>
+                    ${
+                      place.display_name && place.display_name !== place.name
+                        ? `<span class="trip-suggestion-address">${escapeHtml(place.display_name)}</span>`
+                        : ""
+                    }
                   </button>
                 `
                   )
@@ -1859,6 +1868,7 @@ class VigoBusCard extends HTMLElement {
             `
                 : ""
             }
+            <div class="meta" style="margin-top: 6px;">${escapeHtml(t(locale, "trip_osm_attribution"))}</div>
           `
           }
           ${state.status === "planning" ? `<div class="meta" style="margin-top: 6px;">${escapeHtml(t(locale, "trip_planning"))}</div>` : ""}
@@ -2539,10 +2549,25 @@ class VigoBusCard extends HTMLElement {
           background: var(--vigobus-veil-weak);
           color: var(--vigobus-text);
           font-size: 13px;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
         }
 
         .trip-suggestion:hover {
           background: var(--vigobus-veil);
+        }
+
+        .trip-suggestion-name {
+          font-weight: 700;
+        }
+
+        .trip-suggestion-address {
+          font-size: 11px;
+          color: var(--vigobus-muted);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .trip-itinerary-list {
