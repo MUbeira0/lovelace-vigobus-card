@@ -1063,6 +1063,7 @@ class VigoBusCard extends HTMLElement {
       error: null,
     };
     this._tripSearchToken = 0;
+    this._openTripItinerary = null;
     this.attachShadow({ mode: "open" });
   }
 
@@ -1664,6 +1665,17 @@ class VigoBusCard extends HTMLElement {
 
   _clearTripDestination() {
     this._tripState = { ...this._tripState, destination: null, result: null, error: null };
+    this._openTripItinerary = null;
+    this._render();
+  }
+
+  _openTripItineraryDetail(index) {
+    this._openTripItinerary = index;
+    this._render();
+  }
+
+  _closeTripItineraryDetail() {
+    this._openTripItinerary = null;
     this._render();
   }
 
@@ -1674,6 +1686,7 @@ class VigoBusCard extends HTMLElement {
     }
 
     this._tripState = { ...this._tripState, status: "planning", error: null, result: null };
+    this._openTripItinerary = null;
     this._render();
 
     try {
@@ -1731,28 +1744,72 @@ class VigoBusCard extends HTMLElement {
     `;
   }
 
+  _tripTransferLabel(itinerary, locale) {
+    return itinerary.transfers === 0
+      ? t(locale, "trip_direct")
+      : `${itinerary.transfers} ${t(locale, itinerary.transfers === 1 ? "trip_transfer_one" : "trip_transfers")}`;
+  }
+
+  _renderTripSummaryRow(itinerary, index, locale) {
+    const chips = (itinerary.legs || [])
+      .filter((leg) => leg.mode === "bus")
+      .map((leg) => {
+        const color = getLineColor(leg.line, leg.line_color);
+        const textColor = getContrastTextColor(color);
+        return `<span class="line-badge" style="background: ${color}; color: ${textColor};">${escapeHtml(leg.line || "-")}</span>`;
+      })
+      .join("");
+
+    return `
+      <div
+        class="stop-item trip-itinerary-row"
+        data-trip-itinerary-index="${index}"
+        role="button"
+        tabindex="0"
+      >
+        <div class="hero-top">
+          <div class="stop-name">${escapeHtml(itinerary.depart || "")} → ${escapeHtml(itinerary.arrive || "")}</div>
+          <span class="pill">${escapeHtml(formatHumanDuration(itinerary.duration_min))}</span>
+        </div>
+        <div class="meta">${escapeHtml(this._tripTransferLabel(itinerary, locale))}</div>
+        <div class="mini-pill-row">${chips}</div>
+      </div>
+    `;
+  }
+
   _renderTripResult(result, locale) {
-    const itinerary = result?.itineraries?.[0];
-    if (!itinerary) {
+    const itineraries = result?.itineraries || [];
+    if (!itineraries.length) {
       const warning = result?.warnings?.[0];
       const key = warning === "no_service_on_date" ? "trip_no_service" : "trip_no_route";
       return `<div class="meta" style="margin-top: 6px;">${escapeHtml(t(locale, key))}</div>`;
     }
 
-    const transferLabel =
-      itinerary.transfers === 0
-        ? t(locale, "trip_direct")
-        : `${itinerary.transfers} ${t(locale, itinerary.transfers === 1 ? "trip_transfer_one" : "trip_transfers")}`;
+    return `
+      <div class="trip-itinerary-list">
+        ${itineraries.map((itinerary, index) => this._renderTripSummaryRow(itinerary, index, locale)).join("")}
+      </div>
+    `;
+  }
+
+  _renderTripDetailModal(locale) {
+    if (this._openTripItinerary === null || this._openTripItinerary === undefined) {
+      return "";
+    }
+    const itinerary = this._tripState.result?.itineraries?.[this._openTripItinerary];
+    if (!itinerary) {
+      return "";
+    }
 
     return `
-      <div class="stop-item" style="margin-top: 8px;">
-        <div class="hero-top">
-          <div class="stop-name">${escapeHtml(itinerary.depart || "")} → ${escapeHtml(itinerary.arrive || "")}</div>
-          <span class="pill">${escapeHtml(formatHumanDuration(itinerary.duration_min))}</span>
-        </div>
-        <div class="meta">${escapeHtml(transferLabel)}</div>
-        <div class="next-list" style="margin-top: 6px;">
-          ${(itinerary.legs || []).map((leg) => this._renderTripLeg(leg, locale)).join("")}
+      <div class="alert-modal-backdrop" data-trip-backdrop>
+        <div class="alert-modal" role="dialog" aria-modal="true">
+          <button type="button" class="alert-modal-close" data-trip-detail-close aria-label="${escapeHtml(t(locale, "close"))}">&times;</button>
+          <div class="alert-modal-title">${escapeHtml(itinerary.depart || "")} → ${escapeHtml(itinerary.arrive || "")} (${escapeHtml(formatHumanDuration(itinerary.duration_min))})</div>
+          <div class="alert-modal-meta">${escapeHtml(this._tripTransferLabel(itinerary, locale))}</div>
+          <div class="next-list" style="margin-top: 10px;">
+            ${(itinerary.legs || []).map((leg) => this._renderTripLeg(leg, locale)).join("")}
+          </div>
         </div>
       </div>
     `;
@@ -2488,6 +2545,24 @@ class VigoBusCard extends HTMLElement {
           background: var(--vigobus-veil);
         }
 
+        .trip-itinerary-list {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .trip-itinerary-row {
+          margin-top: 0;
+          cursor: pointer;
+          transition: background 0.15s ease;
+        }
+
+        .trip-itinerary-row:hover,
+        .trip-itinerary-row:focus-visible {
+          background: var(--vigobus-veil);
+          outline: none;
+        }
+
         .accent-line {
           height: 4px;
           background: linear-gradient(90deg, var(--vigobus-accent), rgba(255,255,255,0));
@@ -2716,6 +2791,8 @@ class VigoBusCard extends HTMLElement {
             </div>
           </div>
         ` : ""}
+
+        ${this._config.trip_planner_mode ? this._renderTripDetailModal(locale) : ""}
       </ha-card>
     `;
 
@@ -2793,6 +2870,29 @@ class VigoBusCard extends HTMLElement {
 
       this.shadowRoot.querySelectorAll("[data-trip-clear]").forEach((button) => {
         button.addEventListener("click", () => this._clearTripDestination());
+      });
+
+      this.shadowRoot.querySelectorAll(".trip-itinerary-row[data-trip-itinerary-index]").forEach((el) => {
+        const openThisItinerary = () => this._openTripItineraryDetail(Number(el.dataset.tripItineraryIndex));
+        el.addEventListener("click", openThisItinerary);
+        el.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            openThisItinerary();
+          }
+        });
+      });
+
+      this.shadowRoot.querySelectorAll("[data-trip-backdrop]").forEach((backdrop) => {
+        backdrop.addEventListener("click", (ev) => {
+          if (ev.target === backdrop) {
+            this._closeTripItineraryDetail();
+          }
+        });
+      });
+
+      this.shadowRoot.querySelectorAll("[data-trip-detail-close]").forEach((button) => {
+        button.addEventListener("click", () => this._closeTripItineraryDetail());
       });
     }
   }

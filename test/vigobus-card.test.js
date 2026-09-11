@@ -448,6 +448,23 @@ tripCardInstance.hass = {
                   { mode: "walk", from_stop: { name: "Parada B" }, duration_min: 2 },
                 ],
               },
+              {
+                depart: "08:00",
+                arrive: "08:40",
+                duration_min: 40,
+                transfers: 0,
+                legs: [
+                  {
+                    mode: "bus",
+                    line: "15",
+                    line_color: "#1A73C8",
+                    from_stop: { name: "Parada C" },
+                    to_stop: { name: "Praza de America" },
+                    depart: "08:05",
+                    arrive: "08:40",
+                  },
+                ],
+              },
             ],
             warnings: [],
           },
@@ -501,13 +518,45 @@ async function runTripPlannerAsyncTests() {
     "_planTrip falls back to the viewer's person entity when there's no browser geolocation"
   );
 
-  const html = tripCardInstance.shadowRoot.innerHTML;
+  const listHtml = tripCardInstance.shadowRoot.innerHTML;
   assertTrue(
-    html.includes("Parada A") && html.includes("Parada B") && html.includes("08:03") && html.includes("08:15"),
-    "the planned itinerary's legs (stops and times) are rendered"
+    /data-trip-itinerary-index="0"/.test(listHtml) && listHtml.includes("08:00") && listHtml.includes("08:20"),
+    "each itinerary renders as a clickable summary row (Moovit-style list, not inline leg detail)"
   );
-  assertTrue(html.includes(">C1<"), "the bus leg shows its line badge");
-  assertTrue(/5 min/.test(html), "a live leg shows its live minutes");
+  assertTrue(
+    /data-trip-itinerary-index="1"/.test(listHtml) && listHtml.includes("08:40"),
+    "a second, alternative itinerary renders as its own row (several options, like Moovit)"
+  );
+  assertTrue(listHtml.includes(">C1<") && listHtml.includes(">15<"), "each summary row shows its own line badge(s)");
+  assertTrue(
+    !listHtml.includes("Parada A") && !listHtml.includes("08:03"),
+    "leg-level detail (stop names, per-leg times) is NOT shown until a summary row is opened"
+  );
+
+  tripCardInstance._openTripItineraryDetail(0);
+  const detailHtml = tripCardInstance.shadowRoot.innerHTML;
+  assertTrue(
+    detailHtml.includes("data-trip-backdrop") &&
+      detailHtml.includes("Parada A") &&
+      detailHtml.includes("Parada B") &&
+      detailHtml.includes("08:03") &&
+      detailHtml.includes("08:15"),
+    "opening a summary row shows the full leg detail (stops and times) in a modal"
+  );
+  assertTrue(/5 min/.test(detailHtml), "a live leg shows its live minutes in the detail modal");
+
+  tripCardInstance._openTripItineraryDetail(1);
+  const secondDetailHtml = tripCardInstance.shadowRoot.innerHTML;
+  assertTrue(
+    secondDetailHtml.includes("Parada C") && !secondDetailHtml.includes("Parada A"),
+    "opening a different summary row shows that itinerary's own legs, not the first one's"
+  );
+
+  tripCardInstance._closeTripItineraryDetail();
+  assertTrue(
+    !tripCardInstance.shadowRoot.innerHTML.includes("data-trip-backdrop"),
+    "closing the detail modal removes it from the rendered output"
+  );
 }
 
 // --- mobile overflow fix: CSS regression guard ------------------------------
