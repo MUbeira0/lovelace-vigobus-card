@@ -2,6 +2,13 @@ const DOMAIN_PREFIX = "sensor.vigobus_";
 const STOP_SUFFIXES = ["_linea", "_ruta", "_proximos"];
 const STOP_SLOT_COUNT = 6;
 
+// The active trip persists per-viewer (this browser's localStorage, same
+// spirit as "my location" being per-device) until cancelled or its arrival
+// time passes — not a one-off popup.
+const TRIP_ACTIVE_STORAGE_KEY = "vigobus-active-trip";
+const TRIP_ACTIVE_GRACE_MS = 10 * 60 * 1000; // keep it visible a bit past arrival
+const LEAFLET_VERSION = "1.9.4";
+
 const TEXTS = {
   es: {
     unknown: "Desconocido",
@@ -84,8 +91,9 @@ const TEXTS = {
     trip_destination: "Destino",
     trip_destination_placeholder: "Busca una dirección o un lugar (colegio, centro comercial…)",
     trip_search_button: "Buscar",
-    trip_searching: "Buscando paradas…",
+    trip_searching: "Buscando lugares…",
     trip_change_destination: "Cambiar destino",
+    trip_cancel: "Cancelar",
     trip_planning: "Calculando ruta…",
     trip_no_route: "No se encontró ninguna ruta a ese destino.",
     trip_no_service: "No hay servicio de autobús ese día.",
@@ -178,8 +186,9 @@ const TEXTS = {
     trip_destination: "Destination",
     trip_destination_placeholder: "Search for an address or place (school, mall…)",
     trip_search_button: "Search",
-    trip_searching: "Searching stops…",
+    trip_searching: "Searching places…",
     trip_change_destination: "Change destination",
+    trip_cancel: "Cancel",
     trip_planning: "Calculating route…",
     trip_no_route: "No route found to that destination.",
     trip_no_service: "There's no bus service that day.",
@@ -272,8 +281,9 @@ const TEXTS = {
     trip_destination: "Destino",
     trip_destination_placeholder: "Busca un enderezo ou un lugar (colexio, centro comercial…)",
     trip_search_button: "Buscar",
-    trip_searching: "Buscando paradas…",
+    trip_searching: "Buscando lugares…",
     trip_change_destination: "Cambiar destino",
+    trip_cancel: "Cancelar",
     trip_planning: "Calculando ruta…",
     trip_no_route: "Non se atopou ningunha ruta a ese destino.",
     trip_no_service: "Non hai servizo de autobús ese día.",
@@ -441,6 +451,71 @@ function normalizePlanTripResponse(serviceResult) {
     itineraries: Array.isArray(response.itineraries) ? response.itineraries : [],
     warnings: Array.isArray(response.warnings) ? response.warnings : [],
   };
+}
+
+function _latLon(ref) {
+  if (!ref || ref.latitude === null || ref.latitude === undefined || ref.longitude === null || ref.longitude === undefined) {
+    return null;
+  }
+  return { lat: Number(ref.latitude), lon: Number(ref.longitude) };
+}
+
+// Builds the polyline segments for the active-trip map: one per leg, walk
+// legs dashed and gray, bus legs solid in that line's own badge color. There's
+// no real street/road geometry available (the GTFS shapes.txt file is
+// deliberately never parsed, see gtfs.py), so each segment is just a straight
+// line between its two endpoints — a common, honest simplification when a
+// detailed shape isn't available.
+function buildTripMapPoints(result, itinerary) {
+  const origin = _latLon(result?.origin);
+  const destination = _latLon(result?.destination);
+  const legs = itinerary?.legs || [];
+
+  const segments = [];
+  let cursor = origin;
+  for (const leg of legs) {
+    const from = _latLon(leg.from_stop) || cursor;
+    const to = _latLon(leg.to_stop) || destination;
+    if (from && to) {
+      segments.push({
+        mode: leg.mode,
+        color: leg.mode === "bus" ? leg.line_color || "#2a78d6" : "#8a8a8a",
+        coords: [from, to],
+      });
+    }
+    cursor = to || cursor;
+  }
+  return segments;
+}
+
+function ensureLeafletLoaded() {
+  // Only the JS is loaded globally here (window.L is shared across every
+  // card instance on the dashboard, so it's fetched once). Leaflet's CSS is
+  // deliberately NOT injected into document.head: a shadow root is style-
+  // encapsulated, so a stylesheet added to the main document would never
+  // reach the map container rendered inside this card's shadow DOM — the
+  // template itself includes a <link> for it instead (see _render()).
+  if (typeof window === "undefined" || typeof document === "undefined" || !document.head) {
+    return Promise.reject(new Error("no_document"));
+  }
+  if (window.L) {
+    return Promise.resolve(window.L);
+  }
+  if (!window.__vigobusLeafletLoading) {
+    window.__vigobusLeafletLoading = new Promise((resolve, reject) => {
+      try {
+        const script = document.createElement("script");
+        script.src = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.js`;
+        script.async = true;
+        script.addEventListener("load", () => resolve(window.L));
+        script.addEventListener("error", () => reject(new Error("leaflet_load_failed")));
+        document.head.appendChild(script);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+  return window.__vigobusLeafletLoading;
 }
 
 function getBaseStopKey(entityId) {
@@ -1064,9 +1139,10 @@ class VigoBusCard extends HTMLElement {
       destination: null,
       result: null,
       error: null,
+      active: this._loadSavedActiveTrip(),
     };
     this._tripSearchToken = 0;
-    this._openTripItinerary = null;
+    this._tripMapInstance = null;
     this.attachShadow({ mode: "open" });
   }
 
@@ -1668,17 +1744,6 @@ class VigoBusCard extends HTMLElement {
 
   _clearTripDestination() {
     this._tripState = { ...this._tripState, destination: null, result: null, error: null };
-    this._openTripItinerary = null;
-    this._render();
-  }
-
-  _openTripItineraryDetail(index) {
-    this._openTripItinerary = index;
-    this._render();
-  }
-
-  _closeTripItineraryDetail() {
-    this._openTripItinerary = null;
     this._render();
   }
 
@@ -1689,7 +1754,6 @@ class VigoBusCard extends HTMLElement {
     }
 
     this._tripState = { ...this._tripState, status: "planning", error: null, result: null };
-    this._openTripItinerary = null;
     this._render();
 
     try {
@@ -1706,7 +1770,10 @@ class VigoBusCard extends HTMLElement {
         },
         return_response: true,
       });
-      this._tripState = { ...this._tripState, status: "idle", result: normalizePlanTripResponse(response) };
+      const result = normalizePlanTripResponse(response);
+      result.origin = { latitude: coords.lat, longitude: coords.lon };
+      result.destination = { latitude: destination.latitude, longitude: destination.longitude, name: destination.name };
+      this._tripState = { ...this._tripState, status: "idle", result };
     } catch (err) {
       this._tripState = {
         ...this._tripState,
@@ -1715,6 +1782,157 @@ class VigoBusCard extends HTMLElement {
       };
     }
     this._render();
+  }
+
+  // --- active trip: once a route option is picked, it stays as the shown
+  // trip (with a map) for this viewer until they cancel it or its arrival
+  // time passes — not a one-off popup. Persisted to this browser's
+  // localStorage (per-viewer, like "my location" is per-device) so it
+  // survives a dashboard reload too.
+
+  _activateTripItinerary(index) {
+    const result = this._tripState.result;
+    const itinerary = result?.itineraries?.[index];
+    if (!itinerary) {
+      return;
+    }
+    const minutesUntilArrival = Math.max(0, Number(itinerary.duration_min) || 0);
+    const active = {
+      itinerary,
+      origin: result.origin || null,
+      destination: result.destination || this._tripState.destination || null,
+      expiresAt: Date.now() + minutesUntilArrival * 60000 + TRIP_ACTIVE_GRACE_MS,
+    };
+    this._tripState = {
+      ...this._tripState,
+      active,
+      destination: null,
+      result: null,
+      suggestions: [],
+      query: "",
+      error: null,
+    };
+    this._saveActiveTrip(active);
+    this._render();
+  }
+
+  _cancelActiveTrip() {
+    this._tripState = { ...this._tripState, active: null };
+    this._clearSavedActiveTrip();
+    this._render();
+  }
+
+  _saveActiveTrip(active) {
+    try {
+      localStorage.setItem(TRIP_ACTIVE_STORAGE_KEY, JSON.stringify(active));
+    } catch (err) {
+      // localStorage unavailable (private browsing, disabled storage) — the
+      // active trip just won't survive a reload, nothing else breaks.
+    }
+  }
+
+  _clearSavedActiveTrip() {
+    try {
+      localStorage.removeItem(TRIP_ACTIVE_STORAGE_KEY);
+    } catch (err) {
+      // see _saveActiveTrip
+    }
+  }
+
+  _loadSavedActiveTrip() {
+    try {
+      const raw = localStorage.getItem(TRIP_ACTIVE_STORAGE_KEY);
+      if (!raw) {
+        return null;
+      }
+      const saved = JSON.parse(raw);
+      if (!saved || typeof saved !== "object" || !saved.itinerary || !saved.expiresAt) {
+        return null;
+      }
+      if (Date.now() > saved.expiresAt) {
+        localStorage.removeItem(TRIP_ACTIVE_STORAGE_KEY);
+        return null;
+      }
+      return saved;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  _syncTripMap() {
+    // The whole shadow DOM was just replaced by the innerHTML assignment in
+    // _render(), so any previous map's container is already gone — always
+    // dispose it first, or it leaks (Leaflet keeps its own DOM/event refs).
+    if (this._tripMapInstance) {
+      try {
+        this._tripMapInstance.remove();
+      } catch (err) {
+        // ignore — the instance is being discarded either way
+      }
+      this._tripMapInstance = null;
+    }
+
+    const active = this._tripState.active;
+    if (!active) {
+      return;
+    }
+    const container = this.shadowRoot.querySelectorAll("[data-trip-map]")[0];
+    if (!container) {
+      return;
+    }
+
+    const points = buildTripMapPoints(active, active.itinerary);
+    if (!points.length) {
+      return;
+    }
+
+    ensureLeafletLoaded()
+      .then((L) => {
+        // The active trip might have been cancelled (or the card re-rendered
+        // for an unrelated reason) by the time the CDN script resolves.
+        if (this._tripState.active !== active || !this.shadowRoot.contains(container)) {
+          return;
+        }
+
+        const map = L.map(container);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "&copy; OpenStreetMap contributors",
+          maxZoom: 19,
+        }).addTo(map);
+
+        const bounds = [];
+        for (const segment of points) {
+          const latlngs = segment.coords.map((point) => [point.lat, point.lon]);
+          bounds.push(...latlngs);
+          L.polyline(latlngs, {
+            color: segment.color,
+            weight: segment.mode === "bus" ? 5 : 3,
+            dashArray: segment.mode === "walk" ? "6 6" : null,
+          }).addTo(map);
+        }
+
+        const originPoint = points[0].coords[0];
+        const destinationPoint = points[points.length - 1].coords[points[points.length - 1].coords.length - 1];
+        L.circleMarker([originPoint.lat, originPoint.lon], {
+          radius: 7,
+          color: "#2a78d6",
+          fillColor: "#2a78d6",
+          fillOpacity: 1,
+        }).addTo(map);
+        L.circleMarker([destinationPoint.lat, destinationPoint.lon], {
+          radius: 7,
+          color: "#e34948",
+          fillColor: "#e34948",
+          fillOpacity: 1,
+        }).addTo(map);
+
+        map.fitBounds(bounds, { padding: [24, 24] });
+        this._tripMapInstance = map;
+      })
+      .catch(() => {
+        // Leaflet failed to load (offline, CDN blocked) — the rest of the
+        // active-trip view (legs, times) still works fine without a map.
+      });
   }
 
   _renderTripLeg(leg, locale) {
@@ -1796,22 +2014,26 @@ class VigoBusCard extends HTMLElement {
     `;
   }
 
-  _renderTripDetailModal(locale) {
-    if (this._openTripItinerary === null || this._openTripItinerary === undefined) {
-      return "";
-    }
-    const itinerary = this._tripState.result?.itineraries?.[this._openTripItinerary];
-    if (!itinerary) {
-      return "";
-    }
+  _renderActiveTrip(active, locale) {
+    const itinerary = active.itinerary;
+    const destinationName = active.destination?.name || "";
 
     return `
-      <div class="alert-modal-backdrop" data-trip-backdrop>
-        <div class="alert-modal" role="dialog" aria-modal="true">
-          <button type="button" class="alert-modal-close" data-trip-detail-close aria-label="${escapeHtml(t(locale, "close"))}">&times;</button>
-          <div class="alert-modal-title">${escapeHtml(itinerary.depart || "")} → ${escapeHtml(itinerary.arrive || "")} (${escapeHtml(formatHumanDuration(itinerary.duration_min))})</div>
-          <div class="alert-modal-meta">${escapeHtml(this._tripTransferLabel(itinerary, locale))}</div>
-          <div class="next-list" style="margin-top: 10px;">
+      <div class="section">
+        <h4>${escapeHtml(t(locale, "trip_planner_title"))}</h4>
+        <div class="trip-planner">
+          <div class="trip-active-header">
+            <div>
+              <div class="stop-name">${escapeHtml(itinerary.depart || "")} → ${escapeHtml(itinerary.arrive || "")}</div>
+              <div class="meta">
+                ${destinationName ? `${escapeHtml(t(locale, "trip_destination"))}: <b>${escapeHtml(destinationName)}</b> · ` : ""}${escapeHtml(this._tripTransferLabel(itinerary, locale))}
+              </div>
+            </div>
+            <button type="button" class="page-btn page-btn--pill" data-trip-cancel>${escapeHtml(t(locale, "trip_cancel"))}</button>
+          </div>
+          <link rel="stylesheet" href="https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css">
+          <div class="trip-map" data-trip-map></div>
+          <div class="next-list" style="margin-top: 8px;">
             ${(itinerary.legs || []).map((leg) => this._renderTripLeg(leg, locale)).join("")}
           </div>
         </div>
@@ -1821,6 +2043,10 @@ class VigoBusCard extends HTMLElement {
 
   _renderTripPlannerSection(locale, styleKey) {
     const state = this._tripState;
+
+    if (state.active) {
+      return this._renderActiveTrip(state.active, locale);
+    }
 
     return `
       <div class="section">
@@ -1882,6 +2108,11 @@ class VigoBusCard extends HTMLElement {
   _render() {
     if (!this._hass || !this._config) {
       return;
+    }
+
+    if (this._tripState.active && Date.now() > this._tripState.active.expiresAt) {
+      this._tripState = { ...this._tripState, active: null };
+      this._clearSavedActiveTrip();
     }
 
     this._alertLookup = new Map();
@@ -2588,6 +2819,23 @@ class VigoBusCard extends HTMLElement {
           outline: none;
         }
 
+        .trip-active-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .trip-map {
+          margin-top: 8px;
+          height: 220px;
+          border-radius: 12px;
+          overflow: hidden;
+          border: 1px solid var(--vigobus-divider);
+          background: var(--vigobus-veil-weak);
+        }
+
         .accent-line {
           height: 4px;
           background: linear-gradient(90deg, var(--vigobus-accent), rgba(255,255,255,0));
@@ -2817,7 +3065,6 @@ class VigoBusCard extends HTMLElement {
           </div>
         ` : ""}
 
-        ${this._config.trip_planner_mode ? this._renderTripDetailModal(locale) : ""}
       </ha-card>
     `;
 
@@ -2898,27 +3145,21 @@ class VigoBusCard extends HTMLElement {
       });
 
       this.shadowRoot.querySelectorAll(".trip-itinerary-row[data-trip-itinerary-index]").forEach((el) => {
-        const openThisItinerary = () => this._openTripItineraryDetail(Number(el.dataset.tripItineraryIndex));
-        el.addEventListener("click", openThisItinerary);
+        const activateThisItinerary = () => this._activateTripItinerary(Number(el.dataset.tripItineraryIndex));
+        el.addEventListener("click", activateThisItinerary);
         el.addEventListener("keydown", (ev) => {
           if (ev.key === "Enter" || ev.key === " ") {
             ev.preventDefault();
-            openThisItinerary();
+            activateThisItinerary();
           }
         });
       });
 
-      this.shadowRoot.querySelectorAll("[data-trip-backdrop]").forEach((backdrop) => {
-        backdrop.addEventListener("click", (ev) => {
-          if (ev.target === backdrop) {
-            this._closeTripItineraryDetail();
-          }
-        });
+      this.shadowRoot.querySelectorAll("[data-trip-cancel]").forEach((button) => {
+        button.addEventListener("click", () => this._cancelActiveTrip());
       });
 
-      this.shadowRoot.querySelectorAll("[data-trip-detail-close]").forEach((button) => {
-        button.addEventListener("click", () => this._closeTripItineraryDetail());
-      });
+      this._syncTripMap();
     }
   }
 }
