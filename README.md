@@ -145,18 +145,25 @@ not just the fastest one — as its own row: depart/arrive times, total
 duration, transfer count, and line badges.
 
 Tapping a row **activates** that trip: it replaces the search UI with a map
-(walk legs dashed, each bus leg colored like its line badge, a blue dot for
-your start and a red one for the destination) plus the full walk/bus leg
-breakdown, including a live-arrival note on the first leg when it's coming
-up soon. This isn't a one-off popup — the active trip stays shown for this
-browser (survives a dashboard reload) until you tap "Cancelar" or its
-arrival time passes, whichever comes first.
+(walk legs dashed gray, each bus leg colored like its line badge and
+following the bus's real street-level route — not a straight line, using
+the shape the backend traces from the GTFS feed — a blue dot for your start
+and a red one for the destination) plus the full walk/bus leg breakdown,
+including a live-arrival note on the first leg when it's coming up soon.
+This isn't a one-off popup — the active trip stays shown for this browser
+(survives a dashboard reload) until you tap "Cancelar" or its arrival time
+passes, whichever comes first.
 
-The map is drawn with [Leaflet](https://leafletjs.com/) and OpenStreetMap
-tiles, both loaded from a public CDN only while the trip planner is in use —
-no map library is bundled into the card. Segments are straight lines between
-stops (no turn-by-turn road geometry is available), which is enough to see
-the shape of the trip at a glance.
+The map is drawn with [MapLibre GL JS](https://maplibre.org/) and
+[OpenFreeMap](https://openfreemap.org) tiles, both loaded from a public CDN
+only while the trip planner is in use — no map library is bundled into the
+card. OpenFreeMap (not the raw `tile.openstreetmap.org` server) is used
+specifically because OpenStreetMap's own tile usage policy explicitly
+disallows exactly this pattern — many independent installations of the same
+distributed app hitting their servers — and blocks it; OpenFreeMap is a
+free, keyless alternative built for this case. Walk legs are still a
+straight line between their two endpoints, since no free/keyless
+walking-directions service was available to route those too.
 
 Because destination search sends what you type to OpenStreetMap's public
 Nominatim service, results are attributed to "OpenStreetMap contributors"

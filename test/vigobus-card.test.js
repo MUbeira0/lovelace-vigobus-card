@@ -470,6 +470,47 @@ assertEqual(
   "buildTripMapPoints skips a leg missing coordinates instead of crashing"
 );
 
+// A bus leg carrying a real street shape (from the backend's shapes.txt
+// slicing, see trip_planner.py's _leg_shape) uses that full polyline
+// instead of a two-point straight line between its stops.
+const shapeItinerary = {
+  legs: [
+    {
+      mode: "bus",
+      line: "C1",
+      line_color: "#ED4713",
+      from_stop: { latitude: 42.01, longitude: -8.01 },
+      to_stop: { latitude: 42.02, longitude: -8.02 },
+      shape: [
+        [42.01, -8.01],
+        [42.015, -8.015],
+        [42.02, -8.02],
+      ],
+    },
+  ],
+};
+const shapeSegments = sandbox.buildTripMapPoints({}, shapeItinerary);
+assertEqual(
+  shapeSegments[0].coords,
+  [{ lat: 42.01, lon: -8.01 }, { lat: 42.015, lon: -8.015 }, { lat: 42.02, lon: -8.02 }],
+  "a bus leg with a real shape follows its full street-level polyline, not just a straight line"
+);
+
+const noShapeItinerary = {
+  legs: [
+    {
+      mode: "bus",
+      from_stop: { latitude: 42.01, longitude: -8.01 },
+      to_stop: { latitude: 42.02, longitude: -8.02 },
+    },
+  ],
+};
+assertEqual(
+  sandbox.buildTripMapPoints({}, noShapeItinerary)[0].coords,
+  [{ lat: 42.01, lon: -8.01 }, { lat: 42.02, lon: -8.02 }],
+  "a bus leg with no shape (older backend, or a trip missing shape_id) falls back to a straight line"
+);
+
 const tripServiceCalls = [];
 const tripCardInstance = new CardClass();
 tripCardInstance.setConfig({

@@ -7,7 +7,14 @@ const STOP_SLOT_COUNT = 6;
 // time passes — not a one-off popup.
 const TRIP_ACTIVE_STORAGE_KEY = "vigobus-active-trip";
 const TRIP_ACTIVE_GRACE_MS = 10 * 60 * 1000; // keep it visible a bit past arrival
-const LEAFLET_VERSION = "1.9.4";
+
+// Raw tile.openstreetmap.org tiles explicitly disallow this exact usage
+// pattern (many independent installs of the same distributed app all
+// hitting their servers) — see https://wiki.openstreetmap.org/Blocked.
+// OpenFreeMap is a free, keyless, unlimited alternative built specifically
+// for this case (no per-app registration, no rate-limit tier to outgrow).
+const MAPLIBRE_VERSION = "3.6.2";
+const OPENFREEMAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 
 const TEXTS = {
   es: {
@@ -104,6 +111,7 @@ const TEXTS = {
     trip_walk_to: "Camina hasta",
     trip_walk_from: "Camina desde",
     trip_osm_attribution: "Búsqueda de lugares © colaboradores de OpenStreetMap",
+    trip_map_attribution: "Mapa: OpenFreeMap © OpenMapTiles · Datos de OpenStreetMap",
   },
   en: {
     unknown: "Unknown",
@@ -199,6 +207,7 @@ const TEXTS = {
     trip_walk_to: "Walk to",
     trip_walk_from: "Walk from",
     trip_osm_attribution: "Place search © OpenStreetMap contributors",
+    trip_map_attribution: "Map: OpenFreeMap © OpenMapTiles · Data from OpenStreetMap",
   },
   gl: {
     unknown: "Desco\u00f1ecido",
@@ -294,6 +303,7 @@ const TEXTS = {
     trip_walk_to: "Camiña até",
     trip_walk_from: "Camiña desde",
     trip_osm_attribution: "Busca de lugares © colaboradores de OpenStreetMap",
+    trip_map_attribution: "Mapa: OpenFreeMap © OpenMapTiles · Datos de OpenStreetMap",
   },
 };
 
@@ -461,11 +471,12 @@ function _latLon(ref) {
 }
 
 // Builds the polyline segments for the active-trip map: one per leg, walk
-// legs dashed and gray, bus legs solid in that line's own badge color. There's
-// no real street/road geometry available (the GTFS shapes.txt file is
-// deliberately never parsed, see gtfs.py), so each segment is just a straight
-// line between its two endpoints — a common, honest simplification when a
-// detailed shape isn't available.
+// legs dashed and gray (no free/keyless walking-routing service is used, so
+// these stay a straight line between their two endpoints), bus legs solid
+// in that line's own badge color and following the real street shape from
+// the GTFS feed (leg.shape, see trip_planner.py's _leg_shape) when the
+// backend found one — falling back to a straight line otherwise (a trip
+// missing its shape_id, or an older backend before this was added).
 function buildTripMapPoints(result, itinerary) {
   const origin = _latLon(result?.origin);
   const destination = _latLon(result?.destination);
@@ -477,10 +488,14 @@ function buildTripMapPoints(result, itinerary) {
     const from = _latLon(leg.from_stop) || cursor;
     const to = _latLon(leg.to_stop) || destination;
     if (from && to) {
+      const shapeCoords =
+        leg.mode === "bus" && Array.isArray(leg.shape) && leg.shape.length >= 2
+          ? leg.shape.map((point) => ({ lat: point[0], lon: point[1] }))
+          : null;
       segments.push({
         mode: leg.mode,
         color: leg.mode === "bus" ? leg.line_color || "#2a78d6" : "#8a8a8a",
-        coords: [from, to],
+        coords: shapeCoords || [from, to],
       });
     }
     cursor = to || cursor;
@@ -488,34 +503,34 @@ function buildTripMapPoints(result, itinerary) {
   return segments;
 }
 
-function ensureLeafletLoaded() {
-  // Only the JS is loaded globally here (window.L is shared across every
-  // card instance on the dashboard, so it's fetched once). Leaflet's CSS is
-  // deliberately NOT injected into document.head: a shadow root is style-
-  // encapsulated, so a stylesheet added to the main document would never
-  // reach the map container rendered inside this card's shadow DOM — the
-  // template itself includes a <link> for it instead (see _render()).
+function ensureMapLibreLoaded() {
+  // Only the JS is loaded globally here (window.maplibregl is shared across
+  // every card instance on the dashboard, so it's fetched once). MapLibre's
+  // CSS is deliberately NOT injected into document.head: a shadow root is
+  // style-encapsulated, so a stylesheet added to the main document would
+  // never reach the map container rendered inside this card's shadow DOM —
+  // the template itself includes a <link> for it instead (see _render()).
   if (typeof window === "undefined" || typeof document === "undefined" || !document.head) {
     return Promise.reject(new Error("no_document"));
   }
-  if (window.L) {
-    return Promise.resolve(window.L);
+  if (window.maplibregl) {
+    return Promise.resolve(window.maplibregl);
   }
-  if (!window.__vigobusLeafletLoading) {
-    window.__vigobusLeafletLoading = new Promise((resolve, reject) => {
+  if (!window.__vigobusMapLibreLoading) {
+    window.__vigobusMapLibreLoading = new Promise((resolve, reject) => {
       try {
         const script = document.createElement("script");
-        script.src = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.js`;
+        script.src = `https://unpkg.com/maplibre-gl@${MAPLIBRE_VERSION}/dist/maplibre-gl.js`;
         script.async = true;
-        script.addEventListener("load", () => resolve(window.L));
-        script.addEventListener("error", () => reject(new Error("leaflet_load_failed")));
+        script.addEventListener("load", () => resolve(window.maplibregl));
+        script.addEventListener("error", () => reject(new Error("maplibre_load_failed")));
         document.head.appendChild(script);
       } catch (err) {
         reject(err);
       }
     });
   }
-  return window.__vigobusLeafletLoading;
+  return window.__vigobusMapLibreLoading;
 }
 
 function getBaseStopKey(entityId) {
@@ -1862,7 +1877,8 @@ class VigoBusCard extends HTMLElement {
   _syncTripMap() {
     // The whole shadow DOM was just replaced by the innerHTML assignment in
     // _render(), so any previous map's container is already gone — always
-    // dispose it first, or it leaks (Leaflet keeps its own DOM/event refs).
+    // dispose it first, or it leaks (MapLibre keeps its own WebGL context,
+    // DOM and event refs alive otherwise).
     if (this._tripMapInstance) {
       try {
         this._tripMapInstance.remove();
@@ -1886,51 +1902,81 @@ class VigoBusCard extends HTMLElement {
       return;
     }
 
-    ensureLeafletLoaded()
-      .then((L) => {
+    ensureMapLibreLoaded()
+      .then((maplibregl) => {
         // The active trip might have been cancelled (or the card re-rendered
         // for an unrelated reason) by the time the CDN script resolves.
         if (this._tripState.active !== active || !this.shadowRoot.contains(container)) {
           return;
         }
 
-        const map = L.map(container);
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          attribution: "&copy; OpenStreetMap contributors",
-          maxZoom: 19,
-        }).addTo(map);
-
-        const bounds = [];
-        for (const segment of points) {
-          const latlngs = segment.coords.map((point) => [point.lat, point.lon]);
-          bounds.push(...latlngs);
-          L.polyline(latlngs, {
-            color: segment.color,
-            weight: segment.mode === "bus" ? 5 : 3,
-            dashArray: segment.mode === "walk" ? "6 6" : null,
-          }).addTo(map);
-        }
-
-        const originPoint = points[0].coords[0];
-        const destinationPoint = points[points.length - 1].coords[points[points.length - 1].coords.length - 1];
-        L.circleMarker([originPoint.lat, originPoint.lon], {
-          radius: 7,
-          color: "#2a78d6",
-          fillColor: "#2a78d6",
-          fillOpacity: 1,
-        }).addTo(map);
-        L.circleMarker([destinationPoint.lat, destinationPoint.lon], {
-          radius: 7,
-          color: "#e34948",
-          fillColor: "#e34948",
-          fillOpacity: 1,
-        }).addTo(map);
-
-        map.fitBounds(bounds, { padding: [24, 24] });
+        const map = new maplibregl.Map({
+          container,
+          style: OPENFREEMAP_STYLE_URL,
+        });
         this._tripMapInstance = map;
+
+        map.on("load", () => {
+          if (this._tripMapInstance !== map) {
+            return; // disposed (a newer render/sync already replaced it)
+          }
+
+          let minLon = Infinity;
+          let minLat = Infinity;
+          let maxLon = -Infinity;
+          let maxLat = -Infinity;
+
+          points.forEach((segment, index) => {
+            const sourceId = `vigobus-trip-leg-${index}`;
+            map.addSource(sourceId, {
+              type: "geojson",
+              data: {
+                type: "Feature",
+                properties: {},
+                geometry: {
+                  type: "LineString",
+                  coordinates: segment.coords.map((point) => [point.lon, point.lat]),
+                },
+              },
+            });
+            const paint = {
+              "line-color": segment.color,
+              "line-width": segment.mode === "bus" ? 4 : 3,
+            };
+            if (segment.mode === "walk") {
+              paint["line-dasharray"] = [2, 2];
+            }
+            map.addLayer({ id: sourceId, type: "line", source: sourceId, paint });
+
+            for (const point of segment.coords) {
+              minLon = Math.min(minLon, point.lon);
+              minLat = Math.min(minLat, point.lat);
+              maxLon = Math.max(maxLon, point.lon);
+              maxLat = Math.max(maxLat, point.lat);
+            }
+          });
+
+          const originPoint = points[0].coords[0];
+          const lastSegment = points[points.length - 1];
+          const destinationPoint = lastSegment.coords[lastSegment.coords.length - 1];
+          new maplibregl.Marker({ color: "#2a78d6" }).setLngLat([originPoint.lon, originPoint.lat]).addTo(map);
+          new maplibregl.Marker({ color: "#e34948" })
+            .setLngLat([destinationPoint.lon, destinationPoint.lat])
+            .addTo(map);
+
+          if (Number.isFinite(minLon)) {
+            map.fitBounds(
+              [
+                [minLon, minLat],
+                [maxLon, maxLat],
+              ],
+              { padding: 32, duration: 0 }
+            );
+          }
+        });
       })
       .catch(() => {
-        // Leaflet failed to load (offline, CDN blocked) — the rest of the
+        // MapLibre failed to load (offline, CDN blocked) — the rest of the
         // active-trip view (legs, times) still works fine without a map.
       });
   }
@@ -2031,8 +2077,9 @@ class VigoBusCard extends HTMLElement {
             </div>
             <button type="button" class="page-btn page-btn--pill" data-trip-cancel>${escapeHtml(t(locale, "trip_cancel"))}</button>
           </div>
-          <link rel="stylesheet" href="https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css">
+          <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@${MAPLIBRE_VERSION}/dist/maplibre-gl.css">
           <div class="trip-map" data-trip-map></div>
+          <div class="meta" style="margin-top: 4px;">${escapeHtml(t(locale, "trip_map_attribution"))}</div>
           <div class="next-list" style="margin-top: 8px;">
             ${(itinerary.legs || []).map((leg) => this._renderTripLeg(leg, locale)).join("")}
           </div>
