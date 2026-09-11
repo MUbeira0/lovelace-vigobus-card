@@ -92,6 +92,13 @@ const sandbox = {
   },
   navigator: {},
   localStorage: fakeLocalStorage,
+  // Real timers are never actually exercised in this suite (every card
+  // instance here has isConnected === undefined, which short-circuits both
+  // _syncDeviceLocationLoop and _syncTripLiveLocationLoop before they reach
+  // setInterval) — these only need to exist so a test that flips
+  // isConnected to true doesn't crash with a ReferenceError.
+  setInterval: () => 1,
+  clearInterval: () => {},
   console,
 };
 vm.createContext(sandbox);
@@ -716,6 +723,79 @@ async function runTripPlannerAsyncTests() {
   const saved = JSON.parse(savedRaw);
   assertEqual(saved.itinerary.arrive, "08:20", "the persisted trip is the one that was activated");
   assertTrue(saved.expiresAt > Date.now(), "the persisted trip carries a future expiry timestamp");
+
+  // --- while a trip is active, the viewer's own live position is tracked
+  // and pushed onto the trip map as a dedicated marker (separate from the
+  // fixed origin/destination pins), moving as they actually move.
+
+  sandbox.navigator.geolocation = {
+    getCurrentPosition: (success) => success({ coords: { latitude: 42.24, longitude: -8.71 } }),
+  };
+  tripCardInstance._refreshTripLiveLocation();
+  assertEqual(
+    tripCardInstance._tripLiveLocation,
+    { lat: 42.24, lon: -8.71 },
+    "_refreshTripLiveLocation reads the viewer's live position from the browser"
+  );
+
+  const liveMarkerCalls = [];
+  class FakeMapLibreMarker {
+    constructor(opts) {
+      this.opts = opts;
+      liveMarkerCalls.push(this);
+    }
+    setLngLat(lngLat) {
+      this.lngLat = lngLat;
+      return this;
+    }
+    addTo(map) {
+      this.map = map;
+      return this;
+    }
+  }
+  sandbox.window.maplibregl = { Marker: FakeMapLibreMarker };
+  tripCardInstance._tripMapInstance = { fakeMap: true };
+  tripCardInstance._tripLiveMarker = null;
+  tripCardInstance._updateTripLiveMarker();
+  assertEqual(
+    liveMarkerCalls.length,
+    1,
+    "_updateTripLiveMarker creates a live-location marker the first time the map is ready"
+  );
+  assertEqual(
+    liveMarkerCalls[0].lngLat,
+    [-8.71, 42.24],
+    "the live marker is placed at the last-read position, in [lon, lat] order"
+  );
+
+  tripCardInstance._tripLiveLocation = { lat: 42.25, lon: -8.7 };
+  tripCardInstance._updateTripLiveMarker();
+  assertEqual(
+    liveMarkerCalls.length,
+    1,
+    "a later position update moves the existing marker instead of creating a second one"
+  );
+  assertEqual(liveMarkerCalls[0].lngLat, [-8.7, 42.25], "the existing marker is moved to the newly-read position");
+
+  Object.defineProperty(tripCardInstance, "isConnected", { value: true, configurable: true });
+  tripCardInstance._syncTripLiveLocationLoop();
+  assertTrue(
+    Boolean(tripCardInstance._tripLiveLocationTimer),
+    "activating a trip (while attached to the page) starts the live-location refresh loop"
+  );
+
+  tripCardInstance._tripState = { ...tripCardInstance._tripState, active: null };
+  tripCardInstance._syncTripLiveLocationLoop();
+  assertEqual(
+    tripCardInstance._tripLiveLocationTimer,
+    null,
+    "clearing the active trip stops the live-location refresh loop"
+  );
+  assertEqual(
+    tripCardInstance._tripLiveLocation,
+    null,
+    "stopping the loop also forgets the last-read position and marker"
+  );
 
   // A fresh card instance (simulating a dashboard reload) should restore the
   // still-active trip from storage without the viewer searching again.
