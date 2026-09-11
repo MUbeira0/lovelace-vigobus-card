@@ -125,10 +125,11 @@ network while you're not even looking at the screen.
 
 Set `trip_planner_mode: true` (toggle in the card's visual editor, under
 "Planificador de viaje") to add a section that plans a real bus trip — with
-transfers — from your current location to a destination you search for. It
-requires the `vigobus-integration` backend (v2.13.0+) for the stateless
-`vigobus.search_stops` and `vigobus.plan_trip` services, which use Vigo's
-official static GTFS schedule for Vitrasa.
+transfers — from your current location to an address or named place (a
+school, a shopping mall, a hospital) you search for. It requires the
+`vigobus-integration` backend (v2.15.0+) for the stateless `vigobus.geocode`
+and `vigobus.plan_trip` services; `geocode` uses OpenStreetMap's public
+Nominatim service to turn what you typed into coordinates.
 
 ```yaml
 type: custom:vigobus-card
@@ -136,18 +137,23 @@ title: VigoBus
 trip_planner_mode: true
 ```
 
-Type a destination and search; picking a result immediately plans the trip
-using your device's live location as the origin (same geolocation/`person`
-fallback as "My location" above). The result shows depart/arrive times, total
-duration, number of transfers, and each leg (walk or bus, with the same line
-badge colors used elsewhere on the card) — click "Cambiar destino" to search
-again.
+Type a destination and search; each result shows its short name and full
+address. Picking one immediately plans the trip using your device's live
+location as the origin (same geolocation/`person` fallback as "My location"
+above), and shows every reasonable route option Moovit/Google Maps-style —
+not just the fastest one — as its own row: depart/arrive times, total
+duration, transfer count, and line badges. Tap a row to see its full
+walk/bus leg breakdown. Click "Cambiar destino" to search again.
 
-Known limitations (shared with the backend): the destination must be a stop
-you can search for, not a free-text address; only the itinerary's first bus
+Because destination search sends what you type to OpenStreetMap's public
+Nominatim service, results are attributed to "OpenStreetMap contributors"
+right in the search UI, as their usage policy requires.
+
+Known limitations (shared with the backend): only the itinerary's first bus
 leg is cross-checked against live arrival data, the rest is timetable-only;
-and a trip planned very late at night may miss a bus that started running
-the previous service day.
+a trip planned very late at night may miss a bus that started running the
+previous service day; and a very new or obscure place may not be in
+OpenStreetMap's data yet.
 
 ## Troubleshooting
 
