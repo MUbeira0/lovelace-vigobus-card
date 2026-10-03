@@ -922,7 +922,13 @@ function filterBusesByLine(buses, lineFilter) {
   if (!target) {
     return list;
   }
-  return list.filter((bus) => normalizeLine(bus?.linea) === target);
+  // A single-letter filter ("A") also keeps that line's numbered variants
+  // ("A1"), which the backend reports as their own line.
+  const keepVariants = /^[A-Z]$/.test(target);
+  return list.filter((bus) => {
+    const line = normalizeLine(bus?.linea);
+    return line === target || (keepVariants && new RegExp(`^${target}\\d+$`).test(line));
+  });
 }
 
 function getUpdatedAtFromGroup(group) {

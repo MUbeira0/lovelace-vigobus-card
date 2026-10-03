@@ -227,6 +227,8 @@ assertEqual(
   "filterBusesByLine case-insensitive"
 );
 assertEqual(sandbox.filterBusesByLine(deviceBuses, ""), deviceBuses, "empty filter returns all");
+const variantBuses = [{ linea: "A1", minutos: 3 }, { linea: "A", minutos: 5 }, { linea: "15A", minutos: 7 }];
+assertEqual(sandbox.filterBusesByLine(variantBuses, "A").map((b) => b.linea), ["A1", "A"], "a single-letter filter keeps that line's numbered variants but not 15A");
 
 // --- card_style selector -----------------------------------------------------
 
