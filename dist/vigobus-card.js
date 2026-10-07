@@ -995,6 +995,26 @@ function getContrastTextColor(hex) {
   return contrastWithBlack > contrastWithWhite ? "#161616" : "#ffffff";
 }
 
+// Vitrasa route names often start with the line variant in quotes, e.g. line
+// "A" with route `"1" P.E.FADRIQUE por TORRECED` is really line A1. Move that
+// quoted token into the badge label and drop it from the route text. Works for
+// any line; rendering-only, so line filters and colors keep using the base line.
+function splitLineVariant(line, route) {
+  const baseLine = String(line || "").trim();
+  const rawRoute = String(route || "").trim();
+  const match = rawRoute.match(/^["“”«'‘’]\s*([A-Za-z0-9]{1,4})\s*["“”»'‘’]\s*[-–—:]?\s*/);
+
+  if (!match || !baseLine || baseLine === "-") {
+    return { label: baseLine || "-", route: rawRoute };
+  }
+
+  const variant = match[1];
+  const label = variant.toUpperCase().startsWith(baseLine.toUpperCase())
+    ? variant
+    : `${baseLine}${variant}`;
+  return { label, route: rawRoute.slice(match[0].length).trim() };
+}
+
 function formatRouteWithLine(line, route) {
   const normalizedLine = String(line || "").trim();
   const normalizedRoute = String(route || "").trim();
@@ -1589,10 +1609,11 @@ class VigoBusCard extends HTMLElement {
       if (style.lineBadges) {
         const color = getLineColor(bus.linea, bus.color);
         const textColor = getContrastTextColor(color);
+        const split = splitLineVariant(bus.linea, bus.ruta);
         return `
           <div class="next-item" style="border-left-color: ${color};">
-            <span class="line-badge" style="background: ${color}; color: ${textColor};">${escapeHtml(bus.linea || "-")}</span>
-            <span class="next-route">${escapeHtml(String(bus.ruta || "-").trim())}</span>
+            <span class="line-badge" style="background: ${color}; color: ${textColor};">${escapeHtml(split.label)}</span>
+            <span class="next-route">${escapeHtml(split.route || "-")}</span>
             <span class="status-pill ${live ? "live" : "scheduled"}">${escapeHtml(live ? t(locale, "live") : t(locale, "scheduled"))}</span>
             <span class="next-minutes">${escapeHtml(formatShortDuration(bus.minutos))}</span>
           </div>
@@ -2280,7 +2301,9 @@ class VigoBusCard extends HTMLElement {
     const mainMinutes = getMinutesForGroup(primaryGroup, mainLineFilter);
     const mainLine = getLineFromGroup(primaryGroup, mainLineFilter);
     const mainRouteEntries = getRouteEntriesFromGroup(primaryGroup, mainLineFilter);
-    const mainRoute = mainRouteEntries[0]?.route || "-";
+    const mainSplit = splitLineVariant(mainRouteEntries[0]?.line || mainLine, mainRouteEntries[0]?.route);
+    const mainLineLabel = mainLine === "-" ? "-" : mainSplit.label;
+    const mainRoute = mainSplit.route || "-";
     const mainRouteFull = mainRouteEntries.map((item) => formatRouteWithLine(item.line || mainLine, item.route)).join(" | ");
     const mainRouteLabel = mainRouteEntries.length > 1 ? t(locale, "routes") : t(locale, "route");
     // Not just mainLine !== "-": a stop can have real per-bus route data
@@ -3153,7 +3176,7 @@ class VigoBusCard extends HTMLElement {
               <div class="hero-line-row">
                 ${hasMainLineData ? `
                   <div class="hero-line-info">
-                    ${mainLine !== "-" ? `<span class="line-badge" style="background: ${mainLineColor}; color: ${mainLineTextColor};">${escapeHtml(mainLine)}</span>` : ""}
+                    ${mainLine !== "-" ? `<span class="line-badge" style="background: ${mainLineColor}; color: ${mainLineTextColor};">${escapeHtml(mainLineLabel)}</span>` : ""}
                     <span class="next-route">${escapeHtml(mainRoute)}</span>
                   </div>
                 ` : `<div class="hero-line-info"></div>`}
