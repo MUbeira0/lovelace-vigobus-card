@@ -1,12 +1,12 @@
 # VigoBus Card
 
-![VigoBus Card](assets/logo.svg)
+![VigoBus Card](https://raw.githubusercontent.com/MUbeira0/lovelace-vigobus-card/main/assets/logo.svg)
 
 Dashboard card for Home Assistant that displays VigoBus and Vitrasa arrival times, routes, alerts, and multiple configured stops.
 
 [![Latest Release](https://img.shields.io/github/v/release/MUbeira0/lovelace-vigobus-card?sort=semver)](https://github.com/MUbeira0/lovelace-vigobus-card/releases)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.1.0%2B-blue.svg)](https://www.home-assistant.io/)
-[![HACS](https://img.shields.io/badge/HACS-Dashboard-orange.svg)](https://hacs.xyz/)
+[![Marketplace](https://img.shields.io/badge/HA%20Marketplace-Dashboard-orange.svg)](https://www.home-assistant.io/integrations/marketplace/)
 
 ## Features
 
@@ -24,21 +24,32 @@ Dashboard card for Home Assistant that displays VigoBus and Vitrasa arrival time
 - Only re-renders when the entities it actually shows change, instead of on every unrelated state change in the house — no more restarted animations or visual "jumps" from background dashboard activity
 - A stop with no upcoming buses shows a clean "no estimations" message instead of stray placeholder dashes or a raw "unknown"
 
-## Installation with HACS
+## Installation
 
-1. Open HACS.
-2. Add a custom repository.
-3. Use the repository URL for this card.
-4. Select the category `Dashboard`.
-5. Install `VigoBus Card`.
+Since Home Assistant 2026.11, HACS is built into Home Assistant as the
+[Marketplace](https://www.home-assistant.io/integrations/marketplace/).
+This card is already in the catalog (same repository and `hacs.json` as
+before), so search for **VigoBus Card** there and install it. The Marketplace
+adds it as a dashboard resource for you.
 
-Repository URL: `https://github.com/MUbeira0/lovelace-vigobus-card`
+Installed it with HACS before? Nothing to do: Home Assistant migrates existing
+HACS installs automatically on the first start of 2026.11 and keeps updating
+them.
+
+To add it manually (or on Home Assistant older than 2026.11, using HACS):
+
+1. Add a custom repository with the URL `https://github.com/MUbeira0/lovelace-vigobus-card`.
+2. Select the category `Dashboard`.
+3. Install `VigoBus Card`.
 
 ## Resource
 
-If HACS does not add the resource automatically, add:
+If the resource is not added automatically, add it under Settings →
+Dashboards → Resources (type `JavaScript module`):
 
-`/hacsfiles/lovelace-vigobus-card/vigobus-card.js`
+`/local/community/lovelace-vigobus-card/vigobus-card.js`
+
+On HACS before 2026.11 the path is `/hacsfiles/lovelace-vigobus-card/vigobus-card.js`.
 
 ## Configuration options
 
@@ -196,6 +207,7 @@ OpenStreetMap's data yet.
 ## Troubleshooting
 
 - If the card does not render, verify the resource is loaded and refresh the dashboard cache.
+- If you updated from HACS to Home Assistant 2026.11 and the card disappeared, check that the resource URL points to a file that exists (see "Resource" above).
 - If updates do not appear, restart Home Assistant frontend and reload browser/app cache.
 - If entities are missing, confirm the VigoBus integration is installed and sensors exist.
 
