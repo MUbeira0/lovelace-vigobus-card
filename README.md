@@ -1,217 +1,69 @@
+<p align="center"><img src="https://raw.githubusercontent.com/MUbeira0/lovelace-vigobus-card/main/assets/logo.svg" alt="VigoBus Card" width="480"></p>
+
+<p align="center">
+  <b>English</b> ·
+  <a href="https://github.com/MUbeira0/lovelace-vigobus-card/blob/main/README.es.md">Español</a> ·
+  <a href="https://github.com/MUbeira0/lovelace-vigobus-card/blob/main/README.gl.md">Galego</a>
+</p>
+
 # VigoBus Card
 
-![VigoBus Card](https://raw.githubusercontent.com/MUbeira0/lovelace-vigobus-card/main/assets/logo.svg)
+Home Assistant dashboard card for the **buses of Vigo (Vitrasa)**: arrival times, routes, alerts, several stops, "my location" and a trip planner with a map.
 
-Dashboard card for Home Assistant that displays VigoBus and Vitrasa arrival times, routes, alerts, and multiple configured stops.
-
-[![Latest Release](https://img.shields.io/github/v/release/MUbeira0/lovelace-vigobus-card?sort=semver)](https://github.com/MUbeira0/lovelace-vigobus-card/releases)
+[![Latest release](https://img.shields.io/github/v/release/MUbeira0/lovelace-vigobus-card?sort=semver)](https://github.com/MUbeira0/lovelace-vigobus-card/releases)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.1.0%2B-blue.svg)](https://www.home-assistant.io/)
 [![Marketplace](https://img.shields.io/badge/HA%20Marketplace-Dashboard-orange.svg)](https://www.home-assistant.io/integrations/marketplace/)
 
-## Features
+It needs the [VigoBus Pro integration](https://github.com/MUbeira0/vigobus-integration), which provides the sensors and services the card shows.
 
-- Three selectable visual styles (`card_style`): classic gradient glass, refined glass, and a bold transit-app look — pick whichever fits your dashboard from the card editor, no YAML needed
-- Bold, transit-app-inspired look: each bus line gets its own color-coded badge (using Vitrasa's own official line color when published, falling back to a fixed colorblind-checked palette), with a matching accent border on its row
-- Main stop hero layout, sized to stay in proportion with the rest of the card instead of dominating it
-- Secondary stops with matching style — the home `nearest` stop and any manually configured extra stops show automatically; per-device nearest sensors (one per tracked phone/person) are excluded from this automatic list (see "My location" below for the per-viewer alternative)
-- Each upcoming bus is marked live (GPS-tracked) or scheduled (timetable only) with a small pill, the same distinction apps like Moovit show
-- Route-aware upcoming buses, with pagination when a stop has more than a page of buses
-- Optional line filter (global or per stop) to only show arrivals for one bus line
-- Alerts per active line
-- Spanish, English, and Galician UI
-- Compact mode and card editor
-- Follows your Home Assistant light/dark theme instead of a fixed dark look
-- Only re-renders when the entities it actually shows change, instead of on every unrelated state change in the house — no more restarted animations or visual "jumps" from background dashboard activity
-- A stop with no upcoming buses shows a clean "no estimations" message instead of stray placeholder dashes or a raw "unknown"
+## What you get
+
+- **Three visual styles** (`card_style`): `bold` (transit-app look, default), `glass` and `glass_refined`. Pick one from the visual editor, no YAML needed.
+- **Colour-coded line badges** using Vitrasa's official colours when published (otherwise a colour-blind-checked palette).
+- **Live or scheduled**: each bus has a small pill, green *Live* (GPS-tracked) or grey *Scheduled* (timetable only).
+- **Main stop** plus **secondary stops** (your home nearest stop and any extra stop configured in the integration). Per-device nearest sensors are not listed automatically.
+- Pagination when a stop has more buses than fit, optional **line filter** (global or per stop) and **alerts** per active line.
+- **"My location"**: each phone or tablet sees the stop closest to *itself*.
+- **Trip planner** with route options, a map and your live position.
+- Spanish, English and Galician; compact mode; follows your light/dark theme.
+- Efficient: it only redraws when the entities it shows change.
+
+## Requirements
+
+- Home Assistant **2024.1.0 or newer**.
+- The **VigoBus Pro** integration. Some features need a minimum version:
+
+| Feature | Integration version |
+|---|---|
+| Reliable per-device sensor detection (`is_device_nearest`) | 2.3.1+ |
+| "My location" (`vigobus.nearest_stops`) | 2.1.0+ |
+| Trip planner | 2.15.0+ |
+| Street-level walking legs (OpenRouteService key) | 2.17.0+ |
 
 ## Installation
 
-Since Home Assistant 2026.11, HACS is built into Home Assistant as the
-[Marketplace](https://www.home-assistant.io/integrations/marketplace/).
-This card is already in the catalog (same repository and `hacs.json` as
-before), so search for **VigoBus Card** there and install it. The Marketplace
-adds it as a dashboard resource for you.
+Since Home Assistant **2026.11**, HACS is built into Home Assistant as the [Marketplace](https://www.home-assistant.io/integrations/marketplace/).
 
-Installed it with HACS before? Nothing to do: Home Assistant migrates existing
-HACS installs automatically on the first start of 2026.11 and keeps updating
-them.
+1. Open the **Marketplace**, search for **VigoBus Card** and install it. The dashboard resource is added for you.
+2. Reload the dashboard (clear the browser cache if the card does not show up).
 
-To add it manually (or on Home Assistant older than 2026.11, using HACS):
+Already installed with HACS? Nothing to do: Home Assistant migrates it automatically on the first start of 2026.11 and keeps updating it.
 
-1. Add a custom repository with the URL `https://github.com/MUbeira0/lovelace-vigobus-card`.
-2. Select the category `Dashboard`.
-3. Install `VigoBus Card`.
+**Manual / older Home Assistant (with HACS):** add `https://github.com/MUbeira0/lovelace-vigobus-card` as a custom repository, category **Dashboard**, then install **VigoBus Card**.
 
-## Resource
+### Resource
 
-If the resource is not added automatically, add it under Settings →
-Dashboards → Resources (type `JavaScript module`):
+If the resource is not added automatically, add it under *Settings → Dashboards → ⋮ → Resources* (type `JavaScript module`):
 
-`/local/community/lovelace-vigobus-card/vigobus-card.js`
+```text
+/local/community/lovelace-vigobus-card/vigobus-card.js
+```
 
 On HACS before 2026.11 the path is `/hacsfiles/lovelace-vigobus-card/vigobus-card.js`.
 
-## Configuration options
+## Quick start
 
-Everything below is editable from the card's visual editor (click "Edit" on
-the card in a dashboard) — you don't need to write YAML for any of it. The
-YAML form is shown here just as reference.
-
-- `title`: Card title
-- `card_style`: `glass` (classic gradient hero), `glass_refined` (glass with live-pulse dots and accent border), or `bold` (transit badges, default)
-- `accent_color`: Accent color used for the hero gradient, pills, and highlights
-- `language`: `auto` (follows Home Assistant), `es`, `en`, or `gl`
-- `next_buses_count`: How many upcoming buses to show per page before pagination kicks in
-- `show_alerts`: Show active service alerts
-- `alerts_only_main_line`: Restrict alerts to the main stop's current line
-- `alerts_max`: Maximum number of alerts to show per stop
-- `show_all_stops`: Show main stop plus extra configured stops
-- `max_stops`: Maximum number of secondary stops to show
-- `compact`: Use compact mode for tighter dashboards
-- `line_filter`: Only show buses for this line (e.g. `C1`) everywhere on the card, unless a stop overrides it
-- `stops`: each entry accepts `entity`, `title`, and an optional `line` that overrides `line_filter` for that stop only
-
-By default the card shows the `nearest` (home) sensor plus any `sensor.vigobus_*` stop the `vigobus-integration` backend was configured with (its `extra_stops`). If the backend also creates per-device nearest sensors (`nearest_devices` / `auto_nearest_devices`, one per tracked phone or person), those are **not** included in that automatic list — the per-viewer "My location" mode below is the intended way to show someone their own nearest stop, without a manual switcher. Explicitly add a `sensor.vigobus_*` entity to `stops` if you want a specific device sensor pinned on the dashboard regardless of these defaults.
-
-The card identifies per-device sensors from their `is_device_nearest` attribute (`vigobus-integration` v2.3.1+), which works regardless of your Home Assistant language; with an older backend it falls back to guessing from the entity_id (`nearest_<device>`), which can miss stops on some locales.
-
-When a stop has more upcoming buses than fit on one page, a "next/prev" control appears below the list instead of hiding them. Each bus row also shows a small pill: green **"En vivo"/"Live"** means the estimate comes from the bus's live GPS position, gray **"Horario"/"Scheduled"** means it's a schedule-only projection (the vehicle hasn't reported a position yet).
-
-## "My location" mode (per-viewer nearest stop)
-
-Every entity-based stop on this card (including the `nearest` one) reflects
-a single shared Home Assistant state, the same for anyone looking at the
-dashboard. Set `device_location_mode: true` to add an extra section that
-instead asks **each viewing device's own browser/app** for its live GPS
-location and shows the stop(s) closest to *that* device — a phone and a
-tablet looking at the same dashboard can see different stops, automatically,
-with no picker to tap. It requires the `vigobus-integration` backend
-(v2.1.0+) for the stateless `vigobus.nearest_stops` service, and the
-browser/app must grant the page location permission. All of this section's
-options are in the card's visual editor, under "Mi ubicación" — the YAML
-below is only shown for reference.
-
-Because the Home Assistant Companion **app** runs inside a WebView where
-`navigator.geolocation` is unreliable, the card falls back to the coordinates
-of the **viewer's `person` entity** (matched by the logged-in user) — the
-location the app already reports to the server. When that match succeeds,
-the section heads itself with that person's name (e.g. "Miguel · tu
-parada") instead of a generic label. Control the source with
-`device_location_source`:
-
-- `auto` (default): try the browser GPS, fall back to your `person` if it is
-  unavailable or denied (works in the app).
-- `browser`: browser GPS only, no fallback (no name is shown, since there is
-  no `person` match).
-- `person`: skip the browser and always use your `person` coordinates.
-
-For the `person` fallback to have fresh coordinates, enable *Background
-location* and *Single accurate location* in the Companion app sensors.
-
-```yaml
-type: custom:vigobus-card
-title: VigoBus
-device_location_mode: true
-device_location_source: auto # auto | browser | person
-device_location_title: "" # optional, overrides the auto-generated heading
-device_location_tie_margin_m: 60 # also show stops within this many meters of the closest one
-device_location_max_candidates: 3
-device_location_refresh_seconds: 20 # minimum 10
-```
-
-Which stop to show is always automatic — there is no picker for *who* it is.
-The one exception: when more than one stop is within
-`device_location_tie_margin_m` of the closest one for that person, a row of
-chips lets them pick *which stop* to see, since the nearest stop alone is
-genuinely ambiguous (e.g. stops on opposite sidewalks).
-
-This mode is intentionally as live as possible: every lookup forces a brand
-new GPS fix instead of letting the browser hand back a stale cached
-position, and it pauses on its own while the dashboard tab/app isn't
-visible — jumping straight to a fresh reading the moment you switch back to
-it — so lowering `device_location_refresh_seconds` doesn't cost battery or
-network while you're not even looking at the screen.
-
-## Trip planner
-
-Set `trip_planner_mode: true` (toggle in the card's visual editor, under
-"Planificador de viaje") to add a section that plans a real bus trip — with
-transfers — from your current location to an address or named place (a
-school, a shopping mall, a hospital) you search for. It requires the
-`vigobus-integration` backend (v2.15.0+, or v2.17.0+ for the optional
-OpenRouteService walking directions below) for the stateless
-`vigobus.geocode` and `vigobus.plan_trip` services; `geocode` uses
-OpenStreetMap's public Nominatim service to turn what you typed into
-coordinates.
-
-```yaml
-type: custom:vigobus-card
-title: VigoBus
-trip_planner_mode: true
-```
-
-Type a destination and search; each result shows its short name and full
-address. Picking one immediately plans the trip using your device's live
-location as the origin (same geolocation/`person` fallback as "My location"
-above), and shows every reasonable route option Moovit/Google Maps-style —
-not just the fastest one — as its own row: depart/arrive times, total
-duration, transfer count, and line badges.
-
-Tapping a row **activates** that trip: it replaces the search UI with a map
-(walk legs dashed gray, each bus leg colored like its line badge and
-following the bus's real street-level route — not a straight line, using
-the shape the backend traces from the GTFS feed — a blue dot for your start
-and a red one for the destination) plus the full walk/bus leg breakdown,
-including a live-arrival note on the first leg when it's coming up soon.
-This isn't a one-off popup — the active trip stays shown for this browser
-(survives a dashboard reload) until you tap "Cancelar" or its arrival time
-passes, whichever comes first.
-
-While a trip stays active, a separate green dot tracks your actual live
-position on that same map, re-read every few seconds and moved in place as
-you walk or ride — the blue/red pins mark the plan's fixed start and end,
-this one is you, right now. It reuses the same geolocation/`person`
-fallback as everything else in this card, so it needs no extra permission
-beyond what "My location" and the trip search already ask for.
-
-The map is drawn with [MapLibre GL JS](https://maplibre.org/) and
-[OpenFreeMap](https://openfreemap.org) tiles, both loaded from a public CDN
-only while the trip planner is in use — no map library is bundled into the
-card. OpenFreeMap (not the raw `tile.openstreetmap.org` server) is used
-specifically because OpenStreetMap's own tile usage policy explicitly
-disallows exactly this pattern — many independent installations of the same
-distributed app hitting their servers — and blocks it; OpenFreeMap is a
-free, keyless alternative built for this case. Walk legs are a straight
-line between their two endpoints by default, since no free/keyless
-walking-directions service exists — but set `trip_planner_ors_api_key` to
-your own free [OpenRouteService](https://openrouteservice.org/dev) key
-(also settable in the visual editor, under "Planificador de viaje") to
-have the first and last walk legs follow real streets too, the same way
-bus legs already do. Unlike the map tiles or the geocoder, this can't be a
-key shared by every install of this card — ORS's free tier is per-key
-(2000 requests/day), so each user registers their own for their own
-personal use. No key, no request: the card falls back to a straight line
-exactly as before.
-
-Because destination search sends what you type to OpenStreetMap's public
-Nominatim service, results are attributed to "OpenStreetMap contributors"
-right in the search UI, as their usage policy requires; the map tiles carry
-the same attribution.
-
-Known limitations (shared with the backend): only the itinerary's first bus
-leg is cross-checked against live arrival data, the rest is timetable-only;
-a trip planned very late at night may miss a bus that started running the
-previous service day; and a very new or obscure place may not be in
-OpenStreetMap's data yet.
-
-## Troubleshooting
-
-- If the card does not render, verify the resource is loaded and refresh the dashboard cache.
-- If you updated from HACS to Home Assistant 2026.11 and the card disappeared, check that the resource URL points to a file that exists (see "Resource" above).
-- If updates do not appear, restart Home Assistant frontend and reload browser/app cache.
-- If entities are missing, confirm the VigoBus integration is installed and sensors exist.
-
-## Example
+Add the card from the dashboard editor (**VigoBus Card**) and configure it in the visual editor, or use YAML:
 
 ```yaml
 type: custom:vigobus-card
@@ -220,15 +72,107 @@ show_alerts: true
 show_all_stops: true
 ```
 
+By default it shows the `nearest` (home) sensor and every `sensor.vigobus_*` stop configured in the integration.
+
+## Options
+
+Everything is editable from the visual editor; YAML is shown for reference.
+
+| Option | Default | What it does |
+|---|---|---|
+| `title` | `VigoBus` | Card title. |
+| `card_style` | `bold` | `bold`, `glass` or `glass_refined`. |
+| `accent_color` | `#ff6b35` | Accent colour (hero, pills, highlights). |
+| `language` | `auto` | `auto` (follows Home Assistant), `es`, `en` or `gl`. |
+| `compact` | `false` | Tighter layout. |
+| `primary_entity` | empty | Sensor used as the main stop. Empty = automatic. |
+| `show_all_stops` | `true` | Show the main stop plus the secondary ones. |
+| `max_stops` | `6` | Maximum number of secondary stops. |
+| `next_buses_count` | `3` | Buses per page before pagination. |
+| `line_filter` | empty | Only show this line (e.g. `C1`) everywhere, unless a stop overrides it. |
+| `stops` | – | List of stops; each accepts `entity`, `title` and an optional `line` that overrides `line_filter` for that stop. |
+| `show_alerts` | `true` | Show active service alerts. |
+| `alerts_only_main_line` | `false` | Only alerts of the main stop's current line. |
+| `alerts_max` | `3` | Maximum alerts per stop. |
+| `show_debug` | `false` | Shows technical info about the nearest stop (useful for bug reports). |
+| `device_location_mode` | `false` | Enables "My location" (below). |
+| `trip_planner_mode` | `false` | Enables the trip planner (below). |
+
+A stop with no upcoming buses shows a clean "no estimates" message instead of placeholders.
+
+```yaml
+type: custom:vigobus-card
+stops:
+  - entity: sensor.vigobus_urzaiz
+    title: Work
+    line: C1
+```
+
+## "My location" mode
+
+Normally every stop reflects one shared Home Assistant state, the same for everyone. With `device_location_mode: true` the card asks **each device's own browser/app** for its live location and shows the stop closest to *that* device, so a phone and a tablet on the same dashboard can show different stops.
+
+The Home Assistant Companion app runs in a WebView where browser GPS is unreliable, so the card can fall back to the **`person` entity of the logged-in user**. If it matches, the section is titled with that person's name.
+
+```yaml
+type: custom:vigobus-card
+device_location_mode: true
+device_location_source: auto      # auto | browser | person
+device_location_title: ""         # optional, replaces the automatic heading
+device_location_tie_margin_m: 60  # also show stops this close to the nearest one
+device_location_max_candidates: 3
+device_location_refresh_seconds: 20  # minimum 10
+```
+
+| `device_location_source` | Behaviour |
+|---|---|
+| `auto` | Browser GPS, falling back to your `person` if it is unavailable or denied (works in the app). |
+| `browser` | Browser GPS only, no fallback and no name. |
+| `person` | Always use your `person` coordinates. |
+
+For fresh `person` coordinates, enable *Background location* and *Single accurate location* in the Companion app sensors. If several stops are within `device_location_tie_margin_m` of the closest one (for example opposite sidewalks), chips let you choose which one to see. Each lookup forces a new GPS fix and pauses while the dashboard is not visible, so it does not waste battery. It needs integration 2.1.0+ and location permission in the browser/app.
+
+## Trip planner
+
+Set `trip_planner_mode: true` (or use the toggle in the visual editor) to plan a real bus trip, with transfers, from your current location to an address or place you search for (a school, a mall, a hospital). It needs integration **2.15.0+**.
+
+```yaml
+type: custom:vigobus-card
+trip_planner_mode: true
+trip_planner_ors_api_key: ""  # optional, see below
+```
+
+1. Type a destination and search. Each result shows its short name and full address.
+2. Pick one: the card plans the trip from your live location (same geolocation / `person` fallback as "My location") and lists every reasonable option with departure and arrival times, duration, transfers and line badges.
+3. Tap a row to **activate** it: a map shows the walk legs (dashed grey), each bus leg in its line colour following the real street route, your start (blue) and destination (red), and the full leg-by-leg breakdown.
+4. A green dot follows **your live position** on the map. The trip stays active in this browser, even after a reload, until you tap *Cancel* or its arrival time passes.
+
+**Walking routes:** walk legs are a straight line by default. Set `trip_planner_ors_api_key` to your own free [OpenRouteService](https://openrouteservice.org/dev) key (2000 requests/day) so the first and last walk legs follow real streets (integration 2.17.0+). It cannot be a shared key, because the free tier is per key. Without a key, nothing is requested.
+
+**Known limits:** only the first bus leg is checked against live data (the rest is timetable only), a trip planned very late at night may miss a bus that started the previous service day, and a very new place may not be in OpenStreetMap yet.
+
+## Privacy and attributions
+
+- Destination search sends what you type to OpenStreetMap's public **Nominatim** service (through the integration). Results are credited to *OpenStreetMap contributors* in the card.
+- The map uses [MapLibre GL JS](https://maplibre.org/) and [OpenFreeMap](https://openfreemap.org) tiles, loaded from a public CDN (`unpkg.com`) **only while the trip planner is in use**. OpenFreeMap is used because OpenStreetMap's own tile servers do not allow this kind of usage.
+- Your OpenRouteService key, if you set one, is stored in the card configuration and is only sent to OpenRouteService.
+
+## Troubleshooting
+
+- **The card does not render:** check that the resource is loaded and refresh the dashboard cache.
+- **It disappeared after moving from HACS to 2026.11:** check that the resource URL points to a file that exists (see *Resource*).
+- **Changes do not appear:** reload the browser or the app cache.
+- **Stops are missing:** confirm the VigoBus Pro integration is installed and its sensors exist.
+- **"My location" shows nothing:** grant location permission, or use `device_location_source: person`.
+
 ## Development
 
-`npm test` (or `node test/vigobus-card.test.js`) runs a dependency-free
-regression suite against `dist/vigobus-card.js` — stop grouping/line-filter
-logic, the `card_style` selector, and a couple of tripwires for two bugs that
-previously shipped silently (a missing visual editor, a mobile layout
-overflow). It runs on every push/PR via GitHub Actions.
+```bash
+npm test
+```
+
+Runs a dependency-free suite against `dist/vigobus-card.js` (stop grouping and line filters, the `card_style` selector, and regression checks for two bugs that shipped before). CI runs it on every push.
 
 ## Support
 
-- Issues: https://github.com/MUbeira0/lovelace-vigobus-card/issues
-- Releases: https://github.com/MUbeira0/lovelace-vigobus-card/releases
+[Issues](https://github.com/MUbeira0/lovelace-vigobus-card/issues) · [Releases](https://github.com/MUbeira0/lovelace-vigobus-card/releases)
