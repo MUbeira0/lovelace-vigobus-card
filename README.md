@@ -1,6 +1,6 @@
 <p align="center"><img src="https://raw.githubusercontent.com/MUbeira0/lovelace-vigobus-card/main/assets/logo.svg" alt="VigoBus Card" width="480"></p>
 
-<p align="center"><b>English</b> · <a href="#espanol">Español</a> · <a href="#galego">Galego</a><br><sub>Español y Galego están más abajo, en este mismo documento · Español e Galego están máis abaixo, neste mesmo documento</sub></p>
+<p align="center"><img src="https://raw.githubusercontent.com/MUbeira0/lovelace-vigobus-card/main/assets/flags/en.svg" alt="English" height="16"> <b>English</b> · <img src="https://raw.githubusercontent.com/MUbeira0/lovelace-vigobus-card/main/assets/flags/es.svg" alt="Español" height="16"> <a href="#espanol">Español</a> · <img src="https://raw.githubusercontent.com/MUbeira0/lovelace-vigobus-card/main/assets/flags/gl.svg" alt="Galego" height="16"> <a href="#galego">Galego</a><br><sub>Español y Galego están más abajo, en este mismo documento · Español e Galego están máis abaixo, neste mesmo documento</sub></p>
 
 # VigoBus Card
 
@@ -178,7 +178,7 @@ Runs a dependency-free suite against `dist/vigobus-card.js` (stop grouping and l
 
 <a id="espanol"></a>
 <details>
-<summary><h2>🇪🇸 Español</h2></summary>
+<summary><h2><img src="https://raw.githubusercontent.com/MUbeira0/lovelace-vigobus-card/main/assets/flags/es.svg" alt="Español" height="16"> Español</h2></summary>
 
 Tarjeta de dashboard de Home Assistant para los **autobuses de Vigo (Vitrasa)**: horas de llegada, rutas, avisos, varias paradas, "mi ubicación" y un planificador de viajes con mapa.
 
@@ -350,7 +350,7 @@ Ejecuta un conjunto de pruebas sin dependencias contra `dist/vigobus-card.js` (a
 
 <a id="galego"></a>
 <details>
-<summary><h2>🏴 Galego</h2></summary>
+<summary><h2><img src="https://raw.githubusercontent.com/MUbeira0/lovelace-vigobus-card/main/assets/flags/gl.svg" alt="Galego" height="16"> Galego</h2></summary>
 
 Tarxeta de dashboard de Home Assistant para os **autobuses de Vigo (Vitrasa)**: horas de chegada, rutas, avisos, varias paradas, "a miña localización" e un planificador de viaxes con mapa.
 
