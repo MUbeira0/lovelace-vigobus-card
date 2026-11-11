@@ -427,6 +427,77 @@ muteCard._render();
 assertTrue(/data-alert-muted="true"/.test(muteCard.shadowRoot.innerHTML), "muted alerts come back (dimmed) when asked");
 sandbox.saveMutedAlerts({});
 
+// --- readable card: no-service hint, one shared alerts list ------------------
+assertEqual(sandbox.getNoServiceInfo({ entity: { attributes: {} } }), null, "no no_service attribute, no hint");
+assertEqual(
+  sandbox.getNoServiceInfo({ entity: { attributes: { no_service: { serving_lines: ["25"], next_scheduled: { time: "06:59", tomorrow: true } } } } }),
+  { lines: ["25"], next: { time: "06:59", tomorrow: true } },
+  "getNoServiceInfo reads the lines and the next departure"
+);
+const hintHtml = sandbox.renderNoServiceHint(
+  { entity: { attributes: { no_service: { serving_lines: ["25"], next_scheduled: { time: "06:59", tomorrow: true } } } } },
+  "es"
+);
+assertTrue(hintHtml.includes("Sin buses ahora") && hintHtml.includes("<b>25</b>") && hintHtml.includes("06:59") && hintHtml.includes("(ma\u00f1ana)"), "the hint says which line serves the stop and when the next one is due");
+assertTrue(sandbox.renderNoServiceHint({ entity: { attributes: {} } }, "es").includes("Sin buses ahora"), "the hint still says there are no buses without extra data");
+
+const sharedAlert = { id_publicacion: "A1", title: "HUELGA GENERAL", lineas: "C1, 25", inicio: "2026-11-10", fin: "2999-01-01", kind: "strike" };
+const aggHass = {
+  language: "es",
+  states: {
+    "sensor.vigobus_a": {
+      entity_id: "sensor.vigobus_a",
+      state: "unknown",
+      attributes: {
+        stop_name: "Casa", buses: [], alerts: [sharedAlert],
+        no_service: { serving_lines: ["25"], next_scheduled: { time: "06:59", line: "25", headsign: "X", tomorrow: true } },
+      },
+    },
+    "sensor.vigobus_b": {
+      entity_id: "sensor.vigobus_b",
+      state: "5",
+      attributes: {
+        stop_name: "Aeroporto",
+        buses: [{ linea: "A1", ruta: "P.E.FADRIQUE", minutos: 5 }],
+        alerts: [sharedAlert, { id_publicacion: "B2", title: "CORTE POLICARPO SANZ", lineas: "A1", inicio: "2026-11-02", fin: "2999-12-31", kind: "closure" },
+                 { id_publicacion: "C3", title: "PARADA ANULADA", lineas: "17", inicio: "2026-06-26", fin: "2999-05-16", kind: "stop_closed" }],
+      },
+    },
+  },
+};
+function makeAggCard(extra) {
+  const card = new CardClass();
+  card.setConfig({ title: "VigoBus", primary_entity: "sensor.vigobus_a", stops: [{ entity: "sensor.vigobus_a", title: "" }, { entity: "sensor.vigobus_b", title: "" }], ...extra });
+  card.hass = aggHass;
+  return card;
+}
+const aggHtml = makeAggCard({ alerts_max: 5 }).shadowRoot.innerHTML;
+assertEqual((aggHtml.match(/class="next-item alert-item"/g) || []).length, 3, "the same alert on two stops is listed once in the shared list (3 distinct alerts)");
+assertTrue(aggHtml.includes("Casa \u00B7 Aeroporto") || aggHtml.includes("Aeroporto \u00B7 Casa"), "a shared alert names every stop it affects");
+assertTrue(aggHtml.includes("Sin buses ahora") && aggHtml.includes("06:59"), "the main stop with no buses shows the no-service hint instead of 'no estimations'");
+assertTrue(!aggHtml.includes("Sin estimaciones") && !aggHtml.includes("Sin pr\u00f3ximos buses"), "the big empty-state texts are gone");
+assertTrue(!aggHtml.includes("Sin alertas para l\u00edneas activas"), "there is no 'no alerts' filler");
+assertTrue(/ALERTAS|alert/i.test(aggHtml) && aggHtml.includes('class="list-label"'), "the alerts list has a readable label");
+
+const limitedCard = makeAggCard({ alerts_max: 2 });
+assertEqual((limitedCard.shadowRoot.innerHTML.match(/class="next-item alert-item"/g) || []).length, 2, "alerts_max caps the shared list");
+assertTrue(limitedCard.shadowRoot.innerHTML.includes("data-alerts-expand") && limitedCard.shadowRoot.innerHTML.includes("Ver todos (3)"), "a button offers to show every alert");
+limitedCard._showAllAlerts = true;
+limitedCard._render();
+assertEqual((limitedCard.shadowRoot.innerHTML.match(/class="next-item alert-item"/g) || []).length, 3, "the button reveals the rest");
+assertTrue(limitedCard.shadowRoot.innerHTML.includes("Ver menos"), "and offers to collapse them again");
+
+const perStopHtml = makeAggCard({ alerts_per_stop: true, alerts_max: 5 }).shadowRoot.innerHTML;
+assertTrue((perStopHtml.match(/class="next-item alert-item"/g) || []).length >= 4, "alerts_per_stop: true brings back the list under each stop");
+
+const noAlertHass = JSON.parse(JSON.stringify(aggHass));
+noAlertHass.states["sensor.vigobus_a"].attributes.alerts = [];
+noAlertHass.states["sensor.vigobus_b"].attributes.alerts = [];
+const quietCard = new CardClass();
+quietCard.setConfig({ title: "VigoBus", primary_entity: "sensor.vigobus_a", stops: [{ entity: "sensor.vigobus_a", title: "" }, { entity: "sensor.vigobus_b", title: "" }] });
+quietCard.hass = noAlertHass;
+assertTrue(!quietCard.shadowRoot.innerHTML.includes('class="list-label"'), "with no alerts the alerts section is not drawn at all");
+
 // --- "my location" (device location) alerts ---------------------------------
 // The stateless nearest_stops service now also returns each candidate's line
 // alerts (previously it only returned buses), so the card should both ask
