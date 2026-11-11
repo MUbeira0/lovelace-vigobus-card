@@ -20,6 +20,7 @@ It needs the [VigoBus Pro integration](https://github.com/MUbeira0/vigobus-integ
 - **Live or scheduled**: each bus has a small pill, green *Live* (GPS-tracked) or grey *Scheduled* (timetable only).
 - **Main stop** plus **secondary stops** (your home nearest stop and any extra stop configured in the integration). Per-device nearest sensors are not listed automatically.
 - Pagination when a stop has more buses than fit, optional **line filter** (global or per stop) and **alerts** per active line.
+- Each alert shows its **type** (strike, road closure, detour, closed stop, roadworks...), when it ends or starts and its lines as **chips in each line's colour**; tap it for the full text. Alerts can be **muted** per browser and the alerts counter is coloured by the most serious one. Needs VigoBus Pro 2.20.0 or later for the type (older versions work it out from the title).
 - **"My location"**: each phone or tablet sees the stop closest to *itself*.
 - **Trip planner** with route options, a map and your live position.
 - Spanish, English and Galician; compact mode; follows your light/dark theme.
@@ -192,6 +193,7 @@ Necesita la [integración VigoBus Pro](https://github.com/MUbeira0/vigobus-integ
 - **En vivo o de horario**: cada bus lleva una pastilla, verde *En vivo* (por GPS) o gris *Horario* (solo según horario).
 - **Parada principal** y **paradas secundarias** (tu parada cercana de casa y las extra configuradas en la integración). Los sensores de parada cercana por dispositivo no se listan automáticamente.
 - Paginación cuando una parada tiene más buses de los que caben, **filtro de línea** opcional (global o por parada) y **avisos** de cada línea activa.
+- Cada aviso muestra su **tipo** (huelga, corte de tráfico, desvío, parada anulada, obras...), cuándo termina o empieza y sus líneas como **chips con el color de cada línea**; púlsalo para ver el texto completo. Los avisos se pueden **silenciar** por navegador y el contador de avisos toma el color del más grave. Para el tipo hace falta VigoBus Pro 2.20.0 o posterior (con versiones anteriores se deduce del título).
 - **"Mi ubicación"**: cada móvil o tablet ve la parada más cercana a *sí mismo*.
 - **Planificador de viajes** con opciones de ruta, mapa y tu posición en vivo.
 - Castellano, inglés y gallego; modo compacto; sigue tu tema claro/oscuro.
@@ -364,6 +366,7 @@ Precisa da [integración VigoBus Pro](https://github.com/MUbeira0/vigobus-integr
 - **En vivo ou de horario**: cada bus leva unha pastilla, verde *En vivo* (por GPS) ou gris *Horario* (só segundo horario).
 - **Parada principal** e **paradas secundarias** (a túa parada próxima da casa e as extra configuradas na integración). Os sensores de parada próxima por dispositivo non se listan automaticamente.
 - Paxinación cando unha parada ten máis buses dos que caben, **filtro de liña** opcional (global ou por parada) e **avisos** de cada liña activa.
+- Cada aviso amosa o seu **tipo** (folga, corte de tráfico, desvío, parada anulada, obras...), cando remata ou empeza e as súas liñas como **chips coa cor de cada liña**; púlsao para ver o texto completo. Os avisos pódense **silenciar** por navegador e o contador de avisos toma a cor do máis grave. Para o tipo fai falta VigoBus Pro 2.20.0 ou posterior (con versións anteriores dedúcese do título).
 - **"A miña localización"**: cada móbil ou tablet ve a parada máis próxima a *si mesmo*.
 - **Planificador de viaxes** con opcións de ruta, mapa e a túa posición en vivo.
 - Castelán, inglés e galego; modo compacto; segue o teu tema claro/escuro.
