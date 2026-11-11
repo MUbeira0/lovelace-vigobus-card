@@ -379,6 +379,54 @@ assertTrue(
 );
 alertCardInstance._closeAlertModal();
 
+// --- alert chips, muting and severity ----------------------------------------
+const chipsHtml = sandbox.renderAlertItem(
+  { id_publicacion: "4029", title: "HUELGA", lineas: "5B, 28, PSA 4, C3d, A, 12A, 18H, U2", kind: "strike", fin: "2999-01-01" },
+  "alert-0",
+  "es",
+  new Map([["5B", "#123456"], ["PSA4", "#abcdef"]])
+);
+assertTrue(chipsHtml.includes('class="alert-chip" style="background: #123456;'), "line chips use the integration's colour for the line");
+assertTrue(chipsHtml.includes("background: #abcdef;"), "chip colours match lines regardless of spaces and case");
+assertTrue(chipsHtml.includes("+2 m\u00e1s"), "line chips cut after 6 and count the rest");
+assertTrue(!chipsHtml.includes(">U2<"), "line chips do not list every line");
+assertTrue(sandbox.renderAlertItem({ title: "x", lineas: "A" }, "alert-1", "es", null, true).includes('data-alert-muted="true"'), "a muted alert row is flagged");
+
+assertEqual(sandbox.alertSeverity("strike"), "high", "a strike is high severity");
+assertEqual(sandbox.alertSeverity("closure"), "medium", "a closure is medium severity");
+assertEqual(sandbox.alertSeverity("works"), "low", "roadworks are low severity");
+assertEqual(sandbox.topAlertKind([{ kind: "works" }, { kind: "strike" }, { kind: "closure" }]), "strike", "the most serious alert wins");
+assertEqual(sandbox.topAlertKind([]), null, "no alerts, no top kind");
+assertTrue(sandbox.renderAlertsPill([{ kind: "strike", title: "a" }, { kind: "works", title: "b" }], "es").includes("sev-high"), "the pill takes the colour of the most serious alert");
+assertTrue(sandbox.renderAlertsPill([{ kind: "works", title: "b" }], "es").includes("sev-low"), "a pill with only roadworks is low severity");
+assertTrue(!sandbox.renderAlertsPill([], "es").includes("sev-"), "an empty alerts pill has no severity");
+
+assertEqual(sandbox.alertMuteKey({ id_publicacion: "4029", title: "x" }), "id:4029", "alerts are muted by publication id");
+assertTrue(sandbox.alertMuteKey({ title: "x", inicio: "a", fin: "b" }).startsWith("sig:x|"), "alerts without an id fall back to a signature");
+let mutedState = sandbox.toggleAlertMuted({ id_publicacion: "7", fin: "2999-01-01" }, {});
+assertEqual(mutedState, { "id:7": "2999-01-01" }, "muting remembers the alert's end date");
+assertTrue(sandbox.isAlertMuted({ id_publicacion: "7" }, mutedState), "isAlertMuted sees a muted alert");
+assertEqual(sandbox.toggleAlertMuted({ id_publicacion: "7" }, mutedState), {}, "muting twice unmutes");
+sandbox.saveMutedAlerts({ "id:1": "2000-01-01", "id:2": "2999-01-01", "id:3": "" });
+assertEqual(sandbox.loadMutedAlerts(), { "id:2": "2999-01-01", "id:3": "" }, "loadMutedAlerts forgets alerts whose end date has passed");
+sandbox.saveMutedAlerts({});
+
+const muteHass = JSON.parse(JSON.stringify(alertHass));
+muteHass.states["sensor.vigobus_nearest"].attributes.alerts[0].fin = "2999-01-01";
+const muteCard = new CardClass();
+muteCard.setConfig({ title: "VigoBus", stops: [{ entity: "sensor.vigobus_nearest", title: "" }] });
+muteCard.hass = muteHass;
+const mutedAlertFromCard = muteCard._alertLookup.get("alert-0");
+muteCard._openAlertModal(mutedAlertFromCard);
+assertTrue(/data-alert-mute/.test(muteCard.shadowRoot.innerHTML), "the alert modal has a mute button");
+muteCard._toggleOpenAlertMuted();
+assertTrue(!/data-alert-key="alert-0"/.test(muteCard.shadowRoot.innerHTML), "a muted alert leaves the list");
+assertTrue(/data-alert-muted-toggle/.test(muteCard.shadowRoot.innerHTML), "a note offers to show the muted alerts");
+muteCard._showMutedAlerts = true;
+muteCard._render();
+assertTrue(/data-alert-muted="true"/.test(muteCard.shadowRoot.innerHTML), "muted alerts come back (dimmed) when asked");
+sandbox.saveMutedAlerts({});
+
 // --- "my location" (device location) alerts ---------------------------------
 // The stateless nearest_stops service now also returns each candidate's line
 // alerts (previously it only returned buses), so the card should both ask

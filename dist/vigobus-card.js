@@ -72,6 +72,11 @@ const TEXTS = {
     close: "Cerrar",
     no_alert_details: "Sin más información disponible.",
     alert_period: "Periodo",
+    alert_mute: "Silenciar aviso",
+    alert_unmute: "Volver a mostrar",
+    alerts_muted: "silenciados",
+    alerts_show_muted: "Mostrar",
+    alerts_hide_muted: "Ocultar",
     alert_until: "hasta",
     alert_from: "desde",
     alert_upcoming: "Pr\u00f3ximo",
@@ -184,6 +189,11 @@ const TEXTS = {
     close: "Close",
     no_alert_details: "No further details available.",
     alert_period: "Period",
+    alert_mute: "Mute alert",
+    alert_unmute: "Show again",
+    alerts_muted: "muted",
+    alerts_show_muted: "Show",
+    alerts_hide_muted: "Hide",
     alert_until: "until",
     alert_from: "from",
     alert_upcoming: "Upcoming",
@@ -296,6 +306,11 @@ const TEXTS = {
     close: "Pechar",
     no_alert_details: "Sen máis información dispoñible.",
     alert_period: "Período",
+    alert_mute: "Silenciar aviso",
+    alert_unmute: "Volver amosar",
+    alerts_muted: "silenciados",
+    alerts_show_muted: "Amosar",
+    alerts_hide_muted: "Agochar",
     alert_until: "ata",
     alert_from: "desde",
     alert_upcoming: "Pr\u00f3ximo",
@@ -582,21 +597,128 @@ function alertTiming(alert, locale, today = new Date()) {
   return "";
 }
 
-function renderAlertItem(alert, key, locale) {
+const ALERT_SEVERITY_RANK = { high: 3, medium: 2, low: 1 };
+const ALERT_KIND_SEVERITY = {
+  strike: "high",
+  stop_closed: "high",
+  closure: "medium",
+  detour: "medium",
+  works: "low",
+  schedule: "low",
+  info: "low",
+};
+
+function alertSeverity(kind) {
+  return ALERT_KIND_SEVERITY[kind] || "low";
+}
+
+// The most serious alert decides the colour of the "N alerts" pill, so a
+// strike stands out from a long roadworks notice.
+function topAlertKind(alerts) {
+  let best = null;
+  for (const alert of Array.isArray(alerts) ? alerts : []) {
+    const kind = classifyAlertKind(alert);
+    if (!best || ALERT_SEVERITY_RANK[alertSeverity(kind)] > ALERT_SEVERITY_RANK[alertSeverity(best)]) {
+      best = kind;
+    }
+  }
+  return best;
+}
+
+function renderAlertsPill(alerts, locale) {
+  const list = Array.isArray(alerts) ? alerts : [];
+  const top = topAlertKind(list);
+  if (!top) {
+    return `<div class="pill">0 ${escapeHtml(t(locale, "alerts"))}</div>`;
+  }
+  return `<div class="pill alerts-pill sev-${alertSeverity(top)}" title="${escapeHtml(t(locale, `kind_${top}`))}">${ALERT_KIND_ICONS[top]} ${list.length} ${escapeHtml(t(locale, "alerts"))}</div>`;
+}
+
+// --- muting alerts (per browser) ---------------------------------------------
+// Same idea as the saved trip: the choice lives in this browser's
+// localStorage. A muted alert is forgotten once its end date has passed.
+const MUTED_ALERTS_STORAGE_KEY = "vigobus-muted-alerts";
+
+function alertMuteKey(alert) {
+  const id = alert?.id_publicacion;
+  return id ? `id:${id}` : `sig:${alert?.title || ""}|${alert?.inicio || ""}|${alert?.fin || ""}`;
+}
+
+function loadMutedAlerts(today = new Date()) {
+  let muted = {};
+  try {
+    const parsed = JSON.parse(localStorage.getItem(MUTED_ALERTS_STORAGE_KEY) || "{}");
+    muted = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch (err) {
+    return {};
+  }
+
+  const todayIso = localIsoDate(today);
+  const kept = {};
+  for (const [key, end] of Object.entries(muted)) {
+    if (!end || String(end) >= todayIso) {
+      kept[key] = end || "";
+    }
+  }
+  return kept;
+}
+
+function saveMutedAlerts(muted) {
+  try {
+    localStorage.setItem(MUTED_ALERTS_STORAGE_KEY, JSON.stringify(muted));
+  } catch (err) {
+    // localStorage unavailable (private browsing, disabled storage): the mute just won't persist.
+  }
+}
+
+function isAlertMuted(alert, muted) {
+  return Object.prototype.hasOwnProperty.call(muted || {}, alertMuteKey(alert));
+}
+
+function toggleAlertMuted(alert, muted) {
+  const next = { ...(muted || {}) };
+  const key = alertMuteKey(alert);
+  if (Object.prototype.hasOwnProperty.call(next, key)) {
+    delete next[key];
+  } else {
+    next[key] = String(alert?.fin || "").slice(0, 10);
+  }
+  return next;
+}
+
+function normalizeAlertLine(value) {
+  return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+}
+
+function summarizeAlertLineList(value, max = 6) {
+  const parts = String(value || "").split(",").map((part) => part.trim()).filter(Boolean);
+  return { items: parts.slice(0, max), extra: Math.max(0, parts.length - max), all: parts };
+}
+
+function renderLineChips(lines, lineColors) {
+  return lines
+    .map((line) => {
+      const color = getLineColor(line, lineColors?.get(normalizeAlertLine(line)));
+      return `<span class="alert-chip" style="background: ${color}; color: ${getContrastTextColor(color)};">${escapeHtml(line)}</span>`;
+    })
+    .join("");
+}
+
+function renderAlertItem(alert, key, locale, lineColors = null, muted = false) {
   const kind = classifyAlertKind(alert);
-  const lines = summarizeAlertLines(alert?.lineas);
+  const lines = summarizeAlertLineList(alert?.lineas);
   const meta = [t(locale, `kind_${kind}`), alertTiming(alert, locale)].filter(Boolean).join(" \u00B7 ");
-  const linesText = lines.text
-    ? `${lines.text}${lines.extra ? ` +${lines.extra} ${t(locale, "alert_more")}` : ""}`
+  const chips = lines.items.length
+    ? `<span class="alert-chips">${renderLineChips(lines.items, lineColors)}${lines.extra ? `<span class="alert-more">+${lines.extra} ${escapeHtml(t(locale, "alert_more"))}</span>` : ""}</span>`
     : "";
 
   return `
-    <div class="next-item alert-item" data-alert-key="${escapeHtml(key)}" data-alert-kind="${escapeHtml(kind)}" role="button" tabindex="0">
+    <div class="next-item alert-item" data-alert-key="${escapeHtml(key)}" data-alert-kind="${escapeHtml(kind)}"${muted ? ' data-alert-muted="true"' : ""} role="button" tabindex="0">
       <strong class="alert-icon" aria-hidden="true">${ALERT_KIND_ICONS[kind]}</strong>
       <span class="alert-body">
         <span class="alert-title">${escapeHtml(alert?.title || "-")}</span>
         <span class="alert-meta">${escapeHtml(meta)}</span>
-        ${linesText ? `<span class="alert-lines">${escapeHtml(t(locale, "line"))}: ${escapeHtml(linesText)}</span>` : ""}
+        ${chips}
       </span>
     </div>
   `;
@@ -1329,6 +1451,10 @@ class VigoBusCard extends HTMLElement {
     this._deviceLocationTimer = null;
     this._busPage = {};
     this._openAlert = null;
+    this._showMutedAlerts = false;
+    this._mutedCount = 0;
+    this._mutedAlerts = {};
+    this._lineColors = new Map();
     this._alertLookup = new Map();
     this._tripState = {
       status: "idle",
@@ -1720,6 +1846,62 @@ class VigoBusCard extends HTMLElement {
     return key;
   }
 
+  // Line colours as the integration publishes them (the buses list of any
+  // VigoBus sensor), so the line chips on an alert match the real liveries.
+  _lineColorMap() {
+    const map = new Map();
+    const states = this._hass?.states || {};
+    for (const stateObj of Object.values(states)) {
+      const buses = stateObj?.attributes?.buses;
+      if (!Array.isArray(buses)) {
+        continue;
+      }
+      for (const bus of buses) {
+        if (bus?.linea && typeof bus?.color === "string") {
+          map.set(normalizeAlertLine(bus.linea), bus.color);
+        }
+      }
+    }
+    return map;
+  }
+
+  _alertRow(alert, locale) {
+    const muted = isAlertMuted(alert, this._mutedAlerts);
+    return renderAlertItem(alert, this._registerAlert(alert), locale, this._lineColors, muted);
+  }
+
+  // filterAlerts() with this browser's muted alerts taken out first (so the
+  // per-stop cap counts only what is shown), unless "show muted" is on.
+  _filterAlerts(alerts, mainLine, onlyMainLine, limit) {
+    const list = Array.isArray(alerts) ? alerts : [];
+    if (this._showMutedAlerts) {
+      return filterAlerts(list, mainLine, onlyMainLine, limit);
+    }
+    const visible = list.filter((alert) => !isAlertMuted(alert, this._mutedAlerts));
+    this._mutedCount += list.length - visible.length;
+    return filterAlerts(visible, mainLine, onlyMainLine, limit);
+  }
+
+  _renderMutedToggle(locale) {
+    const count = this._showMutedAlerts
+      ? Object.keys(this._mutedAlerts || {}).length
+      : this._mutedCount;
+    if (!count) {
+      return "";
+    }
+    return `<button type="button" class="alert-muted-toggle" data-alert-muted-toggle>${count} ${escapeHtml(t(locale, "alerts_muted"))} · ${escapeHtml(t(locale, this._showMutedAlerts ? "alerts_hide_muted" : "alerts_show_muted"))}</button>`;
+  }
+
+  _toggleOpenAlertMuted() {
+    if (!this._openAlert) {
+      return;
+    }
+    this._mutedAlerts = toggleAlertMuted(this._openAlert, this._mutedAlerts);
+    saveMutedAlerts(this._mutedAlerts);
+    this._openAlert = null;
+    this._render();
+  }
+
   _openAlertModal(alert) {
     this._openAlert = alert;
     this._render();
@@ -1807,7 +1989,7 @@ class VigoBusCard extends HTMLElement {
     const distance = getDistanceFromGroup(group);
     const allStopBuses = getBusesFromGroup(group, lineFilter);
     const groupAlerts = getAlertsFromGroup(group);
-    const filteredAlerts = filterAlerts(
+    const filteredAlerts = this._filterAlerts(
       groupAlerts,
       line,
       Boolean(this._config.alerts_only_main_line),
@@ -1831,7 +2013,7 @@ class VigoBusCard extends HTMLElement {
             </div>
             <div class="mini-pill-row">
               <div class="pill">${allStopBuses.length} ${escapeHtml(allStopBuses.length === 1 ? t(locale, "bus") : t(locale, "buses"))}</div>
-              ${this._config.show_alerts ? `<div class="pill">${filteredAlerts.length} ${escapeHtml(t(locale, "alerts"))}</div>` : ""}
+              ${this._config.show_alerts ? renderAlertsPill(filteredAlerts, locale) : ""}
             </div>
           `;
         })()
@@ -1852,7 +2034,7 @@ class VigoBusCard extends HTMLElement {
           ? (filteredAlerts.length
             ? `<div class="next-list secondary-alerts">
                 <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 2px;">${escapeHtml(t(locale, "alerts"))}</div>
-                ${filteredAlerts.map((item) => renderAlertItem(item, this._registerAlert(item), locale)).join("")}
+                ${filteredAlerts.map((item) => this._alertRow(item, locale)).join("")}
               </div>`
             : `<div class="meta" style="margin-top: 2px;">${escapeHtml(t(locale, "no_alerts"))}</div>`)
           : ""}
@@ -1888,7 +2070,7 @@ class VigoBusCard extends HTMLElement {
       const nextBusCount = Math.max(1, Number(this._config.next_buses_count) || 3);
       const lineFilter = String(this._config.line_filter || "").trim();
       const buses = filterBusesByLine(selected?.buses, lineFilter);
-      const deviceAlerts = filterAlerts(
+      const deviceAlerts = this._filterAlerts(
         selected?.alerts,
         lineFilter,
         Boolean(this._config.alerts_only_main_line),
@@ -1928,7 +2110,7 @@ class VigoBusCard extends HTMLElement {
             ? (deviceAlerts.length
               ? `<div class="next-list secondary-alerts">
                   <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 2px;">${escapeHtml(t(locale, "alerts"))}</div>
-                  ${deviceAlerts.map((item) => renderAlertItem(item, this._registerAlert(item), locale)).join("")}
+                  ${deviceAlerts.map((item) => this._alertRow(item, locale)).join("")}
                 </div>`
               : `<div class="meta" style="margin-top: 2px;">${escapeHtml(t(locale, "no_alerts"))}</div>`)
             : ""}
@@ -2420,6 +2602,9 @@ class VigoBusCard extends HTMLElement {
     this._syncTripLiveLocationLoop();
 
     this._alertLookup = new Map();
+    this._mutedCount = 0;
+    this._mutedAlerts = loadMutedAlerts();
+    this._lineColors = this._lineColorMap();
     const locale = getLocale(this._config, this._hass);
     const groups = sortGroupsForDisplay(buildSelectedGroups(this._hass, this._config));
     const primaryGroup = getPrimaryGroup(groups, this._config.primary_entity);
@@ -2457,7 +2642,7 @@ class VigoBusCard extends HTMLElement {
     const mainTitle = getDisplayTitle(primaryGroup, t(locale, "selected_stops"));
     const stale = isGroupStale(primaryGroup);
     const alerts = getAlertsFromGroup(primaryGroup);
-    const visibleAlerts = filterAlerts(
+    const visibleAlerts = this._filterAlerts(
       alerts,
       mainLine,
       Boolean(this._config.alerts_only_main_line),
@@ -2822,6 +3007,60 @@ class VigoBusCard extends HTMLElement {
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
+        }
+
+        .alert-chips {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 4px;
+          margin-top: 2px;
+        }
+
+        .alert-chip {
+          display: inline-block;
+          padding: 1px 6px;
+          border-radius: 6px;
+          font-size: 10.5px;
+          font-weight: 800;
+          line-height: 1.5;
+        }
+
+        .alert-more {
+          font-size: 11px;
+          color: var(--vigobus-muted);
+        }
+
+        .alert-item[data-alert-muted="true"] {
+          opacity: 0.55;
+        }
+
+        .alerts-pill.sev-high {
+          background: color-mix(in srgb, #e74c3c 24%, transparent);
+          color: #ff7b6e;
+        }
+
+        .alerts-pill.sev-medium {
+          background: color-mix(in srgb, #f39c12 24%, transparent);
+          color: #f7b955;
+        }
+
+        .alert-muted-toggle,
+        .alert-mute-btn {
+          margin-top: 8px;
+          padding: 6px 12px;
+          border: none;
+          border-radius: 999px;
+          background: var(--vigobus-veil);
+          color: var(--vigobus-text);
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .alert-muted-toggle:hover,
+        .alert-mute-btn:hover {
+          background: var(--vigobus-veil-strong);
         }
 
         .alert-item {
@@ -3319,7 +3558,7 @@ class VigoBusCard extends HTMLElement {
               <div class="pill-row">
                 <div class="pill">${escapeHtml(primaryGroup.key === "nearest" ? t(locale, "nearest") : t(locale, "main_stop"))}</div>
                 <div class="pill">${mainAllBuses.length} ${escapeHtml(mainAllBuses.length === 1 ? t(locale, "bus") : t(locale, "buses"))}</div>
-                ${this._config.show_alerts ? `<div class="pill">${escapeHtml(visibleAlerts.length)} ${escapeHtml(t(locale, "alerts"))}</div>` : ""}
+                ${this._config.show_alerts ? renderAlertsPill(visibleAlerts, locale) : ""}
                 ${stale ? `<div class="pill">${escapeHtml(t(locale, "stale"))}</div><div class="pill">${escapeHtml(t(locale, "offline"))}</div>` : ""}
               </div>
             ` : `
@@ -3349,7 +3588,8 @@ class VigoBusCard extends HTMLElement {
 
             ${this._config.show_alerts ? `<div class="next-list">
               <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 4px;">${escapeHtml(t(locale, "alerts"))}</div>
-              ${visibleAlerts.length ? visibleAlerts.map((alert) => renderAlertItem(alert, this._registerAlert(alert), locale)).join("") : `<div style="color: var(--vigobus-muted); font-size: 12px;">${escapeHtml(t(locale, "no_alerts"))}</div>`}
+              ${visibleAlerts.length ? visibleAlerts.map((alert) => this._alertRow(alert, locale)).join("") : `<div style="color: var(--vigobus-muted); font-size: 12px;">${escapeHtml(t(locale, "no_alerts"))}</div>`}
+              ${this._renderMutedToggle(locale)}
             </div>` : ""}
           </div>
         ` : `
@@ -3390,9 +3630,10 @@ class VigoBusCard extends HTMLElement {
                 const timing = alertTiming(this._openAlert, locale);
                 return `<div class="alert-modal-meta">${escapeHtml(t(locale, "alert_type"))}: <b>${ALERT_KIND_ICONS[kind]} ${escapeHtml(t(locale, `kind_${kind}`))}</b>${timing ? ` \u00B7 ${escapeHtml(timing)}` : ""}</div>`;
               })()}
-              ${this._openAlert.lineas ? `<div class="alert-modal-meta">${escapeHtml(t(locale, "line"))}: <b>${escapeHtml(this._openAlert.lineas)}</b></div>` : ""}
+              ${this._openAlert.lineas ? `<div class="alert-modal-meta">${escapeHtml(t(locale, "line"))}: <span class="alert-chips">${renderLineChips(summarizeAlertLineList(this._openAlert.lineas, 999).all, this._lineColors)}</span></div>` : ""}
               ${formatAlertDateRange(this._openAlert, locale) ? `<div class="alert-modal-meta">${escapeHtml(t(locale, "alert_period"))}: <b>${escapeHtml(formatAlertDateRange(this._openAlert, locale))}</b></div>` : ""}
               <div class="alert-modal-body">${escapeHtml(this._openAlert.description || t(locale, "no_alert_details"))}</div>
+              <button type="button" class="alert-mute-btn" data-alert-mute>${escapeHtml(t(locale, isAlertMuted(this._openAlert, this._mutedAlerts) ? "alert_unmute" : "alert_mute"))}</button>
             </div>
           </div>
         ` : ""}
@@ -3443,6 +3684,17 @@ class VigoBusCard extends HTMLElement {
 
     this.shadowRoot.querySelectorAll("[data-alert-close]").forEach((button) => {
       button.addEventListener("click", () => this._closeAlertModal());
+    });
+
+    this.shadowRoot.querySelectorAll("[data-alert-mute]").forEach((button) => {
+      button.addEventListener("click", () => this._toggleOpenAlertMuted());
+    });
+
+    this.shadowRoot.querySelectorAll("[data-alert-muted-toggle]").forEach((button) => {
+      button.addEventListener("click", () => {
+        this._showMutedAlerts = !this._showMutedAlerts;
+        this._render();
+      });
     });
 
     if (this._config.trip_planner_mode) {
