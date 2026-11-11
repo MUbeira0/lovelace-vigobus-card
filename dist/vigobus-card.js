@@ -77,6 +77,13 @@ const TEXTS = {
     alerts_muted: "silenciados",
     alerts_show_muted: "Mostrar",
     alerts_hide_muted: "Ocultar",
+    no_buses_now: "Sin buses ahora",
+    no_service_served_by: "Parada servida por",
+    no_service_next: "Próximo horario",
+    tomorrow: "mañana",
+    alerts_show_all: "Ver todos",
+    alerts_show_less: "Ver menos",
+    alerts_per_stop: "Avisos en cada parada (si no, una sola lista)",
     alert_until: "hasta",
     alert_from: "desde",
     alert_upcoming: "Pr\u00f3ximo",
@@ -194,6 +201,13 @@ const TEXTS = {
     alerts_muted: "muted",
     alerts_show_muted: "Show",
     alerts_hide_muted: "Hide",
+    no_buses_now: "No buses right now",
+    no_service_served_by: "Served by",
+    no_service_next: "Next scheduled",
+    tomorrow: "tomorrow",
+    alerts_show_all: "Show all",
+    alerts_show_less: "Show less",
+    alerts_per_stop: "Alerts on every stop (otherwise one shared list)",
     alert_until: "until",
     alert_from: "from",
     alert_upcoming: "Upcoming",
@@ -311,6 +325,13 @@ const TEXTS = {
     alerts_muted: "silenciados",
     alerts_show_muted: "Amosar",
     alerts_hide_muted: "Agochar",
+    no_buses_now: "Sen buses agora",
+    no_service_served_by: "Servida por",
+    no_service_next: "Próximo horario",
+    tomorrow: "mañá",
+    alerts_show_all: "Ver todos",
+    alerts_show_less: "Ver menos",
+    alerts_per_stop: "Avisos en cada parada (se non, unha soa lista)",
     alert_until: "ata",
     alert_from: "desde",
     alert_upcoming: "Pr\u00f3ximo",
@@ -597,6 +618,59 @@ function alertTiming(alert, locale, today = new Date()) {
   return "";
 }
 
+// --- no-service hint + one shared alerts list -----------------------------------
+// VigoBus Pro 2.22+ puts `no_service` on a stop that has no buses at all: the
+// lines that serve it and, when known, its next scheduled departure.
+function getNoServiceInfo(group) {
+  const info = group?.entity?.attributes?.no_service;
+  if (!info || typeof info !== "object") {
+    return null;
+  }
+  const lines = Array.isArray(info.serving_lines) ? info.serving_lines.map((line) => String(line)).filter(Boolean) : [];
+  const next = info.next_scheduled && typeof info.next_scheduled === "object" ? info.next_scheduled : null;
+  return lines.length || next ? { lines, next } : null;
+}
+
+function renderNoServiceHint(group, locale) {
+  const info = getNoServiceInfo(group);
+  const parts = [];
+  if (info?.lines.length) {
+    parts.push(`${escapeHtml(t(locale, "no_service_served_by"))} <b>${escapeHtml(info.lines.join(", "))}</b>`);
+  }
+  if (info?.next?.time) {
+    const when = `${escapeHtml(info.next.time)}${info.next.tomorrow ? ` (${escapeHtml(t(locale, "tomorrow"))})` : ""}`;
+    parts.push(`${escapeHtml(t(locale, "no_service_next"))} <b>${when}</b>`);
+  }
+  return `
+    <div class="empty-hint">
+      <strong>${escapeHtml(t(locale, "no_buses_now"))}</strong>
+      ${parts.length ? `<span>${parts.join(" · ")}</span>` : ""}
+    </div>
+  `;
+}
+
+// The same alert is attached to every stop served by an affected line, so with
+// several stops the card used to repeat it under each one. This merges them
+// into one list and remembers which stops each alert touches.
+function aggregateGroupAlerts(groups) {
+  const merged = new Map();
+  for (const group of groups) {
+    const name = getDisplayTitle(group, "");
+    for (const alert of getAlertsFromGroup(group)) {
+      const key = alertMuteKey(alert);
+      let entry = merged.get(key);
+      if (!entry) {
+        entry = { ...alert, stops: [] };
+        merged.set(key, entry);
+      }
+      if (name && !entry.stops.includes(name)) {
+        entry.stops.push(name);
+      }
+    }
+  }
+  return Array.from(merged.values());
+}
+
 const ALERT_SEVERITY_RANK = { high: 3, medium: 2, low: 1 };
 const ALERT_KIND_SEVERITY = {
   strike: "high",
@@ -719,6 +793,7 @@ function renderAlertItem(alert, key, locale, lineColors = null, muted = false) {
         <span class="alert-title">${escapeHtml(alert?.title || "-")}</span>
         <span class="alert-meta">${escapeHtml(meta)}</span>
         ${chips}
+        ${Array.isArray(alert?.stops) && alert.stops.length ? `<span class="alert-stops">\uD83D\uDCCD ${escapeHtml(alert.stops.join(" \u00B7 "))}</span>` : ""}
       </span>
     </div>
   `;
@@ -1400,6 +1475,7 @@ class VigoBusCard extends HTMLElement {
       show_alerts: true,
       alerts_only_main_line: false,
       alerts_max: 3,
+      alerts_per_stop: false,
       accent_color: "#ff6b35",
       card_style: "bold",
       language: "auto",
@@ -1433,6 +1509,7 @@ class VigoBusCard extends HTMLElement {
       show_alerts: true,
       alerts_only_main_line: false,
       alerts_max: 3,
+      alerts_per_stop: false,
       accent_color: "#ff6b35",
       card_style: "bold",
       language: "auto",
@@ -1452,6 +1529,7 @@ class VigoBusCard extends HTMLElement {
     this._busPage = {};
     this._openAlert = null;
     this._showMutedAlerts = false;
+    this._showAllAlerts = false;
     this._mutedCount = 0;
     this._mutedAlerts = {};
     this._lineColors = new Map();
@@ -1484,6 +1562,7 @@ class VigoBusCard extends HTMLElement {
       max_stops: Number(config.max_stops ?? this._config.max_stops ?? 6),
       next_buses_count: Number(config.next_buses_count ?? this._config.next_buses_count ?? 3),
       alerts_max: Number(config.alerts_max ?? this._config.alerts_max ?? 3),
+      alerts_per_stop: Boolean(config.alerts_per_stop ?? this._config.alerts_per_stop ?? false),
       card_style: CARD_STYLES[config.card_style ?? this._config.card_style]
         ? config.card_style ?? this._config.card_style
         : "bold",
@@ -1989,12 +2068,13 @@ class VigoBusCard extends HTMLElement {
     const distance = getDistanceFromGroup(group);
     const allStopBuses = getBusesFromGroup(group, lineFilter);
     const groupAlerts = getAlertsFromGroup(group);
-    const filteredAlerts = this._filterAlerts(
-      groupAlerts,
-      line,
-      Boolean(this._config.alerts_only_main_line),
-      this._config.alerts_max
-    );
+    const perStop = Boolean(this._config.alerts_per_stop);
+    // With one shared list (the default) a stop only shows a small count; the
+    // alerts themselves are listed once, above.
+    const filteredAlerts = perStop
+      ? this._filterAlerts(groupAlerts, line, Boolean(this._config.alerts_only_main_line), this._config.alerts_max)
+      : groupAlerts.filter((alert) => !isAlertMuted(alert, this._mutedAlerts) || this._showMutedAlerts);
+    const noBuses = allStopBuses.length === 0;
 
     const header = style.heroLayout === "big"
       ? (() => {
@@ -2009,7 +2089,7 @@ class VigoBusCard extends HTMLElement {
                 <div class="stop-name">${escapeHtml(group.title)}</div>
                 ${hasLineData ? `<div class="meta">${line !== "-" ? `${escapeHtml(t(locale, "line"))}: <b>${escapeHtml(line)}</b><br>` : ""}${escapeHtml(routeLabel)}: <b>${escapeHtml(route)}</b></div>` : ""}
               </div>
-              <div class="main-time">${minutes === null ? escapeHtml(t(locale, "unavailable")) : escapeHtml(formatShortDuration(minutes))}</div>
+              ${minutes === null ? "" : `<div class="main-time">${escapeHtml(formatShortDuration(minutes))}</div>`}
             </div>
             <div class="mini-pill-row">
               <div class="pill">${allStopBuses.length} ${escapeHtml(allStopBuses.length === 1 ? t(locale, "bus") : t(locale, "buses"))}</div>
@@ -2020,7 +2100,10 @@ class VigoBusCard extends HTMLElement {
       : `
         <div class="hero-top">
           <div class="stop-name">${escapeHtml(group.title)}</div>
-          ${distance !== null ? `<span class="pill">${distance.toFixed(0)} m</span>` : ""}
+          <span class="pill-group">
+            ${this._config.show_alerts && !perStop && filteredAlerts.length ? renderAlertsPill(filteredAlerts, locale) : ""}
+            ${distance !== null ? `<span class="pill">${distance.toFixed(0)} m</span>` : ""}
+          </span>
         </div>
       `;
 
@@ -2028,15 +2111,13 @@ class VigoBusCard extends HTMLElement {
       <div class="stop-item">
         ${header}
 
-        ${this._renderBusList(`stop:${group.key}`, allStopBuses, nextBusCount, locale, styleKey)}
+        ${noBuses ? renderNoServiceHint(group, locale) : this._renderBusList(`stop:${group.key}`, allStopBuses, nextBusCount, locale, styleKey)}
 
-        ${this._config.show_alerts
-          ? (filteredAlerts.length
-            ? `<div class="next-list secondary-alerts">
-                <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 2px;">${escapeHtml(t(locale, "alerts"))}</div>
-                ${filteredAlerts.map((item) => this._alertRow(item, locale)).join("")}
-              </div>`
-            : `<div class="meta" style="margin-top: 2px;">${escapeHtml(t(locale, "no_alerts"))}</div>`)
+        ${this._config.show_alerts && perStop && filteredAlerts.length
+          ? `<div class="next-list secondary-alerts">
+              <div class="list-label">${escapeHtml(t(locale, "alerts"))}</div>
+              ${filteredAlerts.map((item) => this._alertRow(item, locale)).join("")}
+            </div>`
           : ""}
       </div>
     `;
@@ -2106,13 +2187,11 @@ class VigoBusCard extends HTMLElement {
             <span class="pill">${Number(selected?.distance_m || 0).toFixed(0)} m</span>
           </div>
           ${this._renderBusList(`device:${selected?.id}`, buses, nextBusCount, locale, styleKey)}
-          ${this._config.show_alerts
-            ? (deviceAlerts.length
-              ? `<div class="next-list secondary-alerts">
-                  <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 2px;">${escapeHtml(t(locale, "alerts"))}</div>
-                  ${deviceAlerts.map((item) => this._alertRow(item, locale)).join("")}
-                </div>`
-              : `<div class="meta" style="margin-top: 2px;">${escapeHtml(t(locale, "no_alerts"))}</div>`)
+          ${this._config.show_alerts && deviceAlerts.length
+            ? `<div class="next-list secondary-alerts">
+                <div class="list-label">${escapeHtml(t(locale, "alerts"))}</div>
+                ${deviceAlerts.map((item) => this._alertRow(item, locale)).join("")}
+              </div>`
             : ""}
         </div>
       `;
@@ -2641,13 +2720,20 @@ class VigoBusCard extends HTMLElement {
     const mainLineTextColor = getContrastTextColor(mainLineColor);
     const mainTitle = getDisplayTitle(primaryGroup, t(locale, "selected_stops"));
     const stale = isGroupStale(primaryGroup);
-    const alerts = getAlertsFromGroup(primaryGroup);
-    const visibleAlerts = this._filterAlerts(
-      alerts,
+    const perStopAlerts = Boolean(this._config.alerts_per_stop);
+    const alertsSource = perStopAlerts
+      ? getAlertsFromGroup(primaryGroup)
+      : aggregateGroupAlerts([primaryGroup, ...visibleSecondary].filter(Boolean));
+    const allVisibleAlerts = this._filterAlerts(
+      alertsSource,
       mainLine,
       Boolean(this._config.alerts_only_main_line),
-      this._config.alerts_max
+      perStopAlerts ? this._config.alerts_max : 999
     );
+    const alertsLimit = Math.max(1, Number(this._config.alerts_max) || 3);
+    const visibleAlerts = perStopAlerts || this._showAllAlerts ? allVisibleAlerts : allVisibleAlerts.slice(0, alertsLimit);
+    const canExpandAlerts = !perStopAlerts && allVisibleAlerts.length > alertsLimit;
+    const mainNoBuses = mainAllBuses.length === 0;
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -2976,8 +3062,51 @@ class VigoBusCard extends HTMLElement {
           white-space: nowrap;
         }
 
-        .alert-icon {
+        .list-label {
+          margin-top: 4px;
+          color: var(--vigobus-muted);
+          font-size: 13px;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+
+        .empty-hint {
+          display: grid;
+          gap: 3px;
+          margin-top: 10px;
+          padding: 10px 12px;
+          border-radius: 12px;
+          border-left: 3px solid var(--vigobus-divider);
+          background: var(--vigobus-veil-weak);
+          color: var(--vigobus-text);
+        }
+
+        .empty-hint strong {
           font-size: 15px;
+          font-weight: 800;
+        }
+
+        .empty-hint span {
+          color: var(--vigobus-muted);
+          font-size: 13px;
+          line-height: 1.45;
+        }
+
+        .pill-group {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .alert-stops {
+          color: var(--vigobus-muted);
+          font-size: 12.5px;
+          line-height: 1.35;
+        }
+
+        .alert-icon {
+          font-size: 17px;
           line-height: 1.3;
         }
 
@@ -2990,7 +3119,8 @@ class VigoBusCard extends HTMLElement {
         }
 
         .alert-title {
-          font-weight: 600;
+          font-size: 14px;
+          font-weight: 700;
           line-height: 1.3;
           overflow: hidden;
           overflow-wrap: anywhere;
@@ -3002,7 +3132,7 @@ class VigoBusCard extends HTMLElement {
 
         .alert-meta,
         .alert-lines {
-          font-size: 12px;
+          font-size: 12.5px;
           color: var(--vigobus-muted);
           overflow: hidden;
           text-overflow: ellipsis;
@@ -3019,9 +3149,9 @@ class VigoBusCard extends HTMLElement {
 
         .alert-chip {
           display: inline-block;
-          padding: 1px 6px;
+          padding: 1px 7px;
           border-radius: 6px;
-          font-size: 10.5px;
+          font-size: 11.5px;
           font-weight: 800;
           line-height: 1.5;
         }
@@ -3550,15 +3680,15 @@ class VigoBusCard extends HTMLElement {
                     <div class="meta">${hasMainLineData ? `${mainLine !== "-" ? `${escapeHtml(t(locale, "line"))}: <b>${escapeHtml(mainLine)}</b><br>` : ""}${escapeHtml(mainRouteLabel)}: <b>${escapeHtml(mainRouteFull)}</b>` : ""}${mainDistance !== null ? `${hasMainLineData ? "<br>" : ""}${escapeHtml(t(locale, "distance"))}: <b>${mainDistance.toFixed(0)} m</b>` : ""}</div>
                   ` : ""}
                 </div>
-                <div class="main-time">
+                ${mainMinutes === null ? "" : `<div class="main-time">
                   ${escapeHtml(statusShort)}
                   <small>${escapeHtml(t(locale, "arrival"))}</small>
-                </div>
+                </div>`}
               </div>
               <div class="pill-row">
                 <div class="pill">${escapeHtml(primaryGroup.key === "nearest" ? t(locale, "nearest") : t(locale, "main_stop"))}</div>
                 <div class="pill">${mainAllBuses.length} ${escapeHtml(mainAllBuses.length === 1 ? t(locale, "bus") : t(locale, "buses"))}</div>
-                ${this._config.show_alerts ? renderAlertsPill(visibleAlerts, locale) : ""}
+                ${this._config.show_alerts ? renderAlertsPill(allVisibleAlerts, locale) : ""}
                 ${stale ? `<div class="pill">${escapeHtml(t(locale, "stale"))}</div><div class="pill">${escapeHtml(t(locale, "offline"))}</div>` : ""}
               </div>
             ` : `
@@ -3573,10 +3703,10 @@ class VigoBusCard extends HTMLElement {
                     <span class="next-route">${escapeHtml(mainRoute)}</span>
                   </div>
                 ` : `<div class="hero-line-info"></div>`}
-                <div class="main-time">
+                ${mainMinutes === null ? "" : `<div class="main-time">
                   ${escapeHtml(statusShort)}
                   <small>${escapeHtml(t(locale, "arrival"))}</small>
-                </div>
+                </div>`}
               </div>
               ${stale ? `
                 <div class="pill-row">
@@ -3584,11 +3714,12 @@ class VigoBusCard extends HTMLElement {
                 </div>
               ` : ""}
             `}
-            ${this._renderBusList(`stop:${primaryGroup.key}`, mainAllBuses, nextBusCount, locale, styleKey)}
+            ${mainNoBuses ? renderNoServiceHint(primaryGroup, locale) : this._renderBusList(`stop:${primaryGroup.key}`, mainAllBuses, nextBusCount, locale, styleKey)}
 
-            ${this._config.show_alerts ? `<div class="next-list">
-              <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 4px;">${escapeHtml(t(locale, "alerts"))}</div>
-              ${visibleAlerts.length ? visibleAlerts.map((alert) => this._alertRow(alert, locale)).join("") : `<div style="color: var(--vigobus-muted); font-size: 12px;">${escapeHtml(t(locale, "no_alerts"))}</div>`}
+            ${this._config.show_alerts && (allVisibleAlerts.length || this._mutedCount) ? `<div class="next-list">
+              <div class="list-label">${escapeHtml(t(locale, "alerts"))}${perStopAlerts ? "" : ` \u00B7 ${allVisibleAlerts.length}`}</div>
+              ${visibleAlerts.map((alert) => this._alertRow(alert, locale)).join("")}
+              ${canExpandAlerts ? `<button type="button" class="alert-muted-toggle" data-alerts-expand>${escapeHtml(t(locale, this._showAllAlerts ? "alerts_show_less" : "alerts_show_all"))}${this._showAllAlerts ? "" : ` (${allVisibleAlerts.length})`}</button>` : ""}
               ${this._renderMutedToggle(locale)}
             </div>` : ""}
           </div>
@@ -3690,6 +3821,13 @@ class VigoBusCard extends HTMLElement {
       button.addEventListener("click", () => this._toggleOpenAlertMuted());
     });
 
+    this.shadowRoot.querySelectorAll("[data-alerts-expand]").forEach((button) => {
+      button.addEventListener("click", () => {
+        this._showAllAlerts = !this._showAllAlerts;
+        this._render();
+      });
+    });
+
     this.shadowRoot.querySelectorAll("[data-alert-muted-toggle]").forEach((button) => {
       button.addEventListener("click", () => {
         this._showMutedAlerts = !this._showMutedAlerts;
@@ -3772,6 +3910,7 @@ class VigoBusCardEditor extends HTMLElement {
       show_alerts: true,
       alerts_only_main_line: false,
       alerts_max: 3,
+      alerts_per_stop: false,
       accent_color: "#ff6b35",
       card_style: "bold",
       language: "auto",
@@ -4018,6 +4157,14 @@ class VigoBusCardEditor extends HTMLElement {
               <span>${escapeHtml(t(locale, "alerts_only_main_line"))}</span>
             </label>
           </div>
+          <div>
+            <label style="display:flex; align-items:center; gap:10px;">
+              <ha-switch
+                id="alerts_per_stop"
+              ></ha-switch>
+              <span>${escapeHtml(t(locale, "alerts_per_stop"))}</span>
+            </label>
+          </div>
         </div>
 
         <div class="row">
@@ -4115,6 +4262,7 @@ class VigoBusCardEditor extends HTMLElement {
     const showDebug = this.shadowRoot.getElementById("show_debug");
     const showAlerts = this.shadowRoot.getElementById("show_alerts");
     const alertsOnlyMainLine = this.shadowRoot.getElementById("alerts_only_main_line");
+    const alertsPerStop = this.shadowRoot.getElementById("alerts_per_stop");
     const alertsMax = this.shadowRoot.getElementById("alerts_max");
     const lineFilter = this.shadowRoot.getElementById("line_filter");
     const deviceLocationMode = this.shadowRoot.getElementById("device_location_mode");
@@ -4166,6 +4314,9 @@ class VigoBusCardEditor extends HTMLElement {
     }
     if (alertsOnlyMainLine) {
       alertsOnlyMainLine.checked = Boolean(config.alerts_only_main_line ?? false);
+    }
+    if (alertsPerStop) {
+      alertsPerStop.checked = Boolean(config.alerts_per_stop ?? false);
     }
     if (alertsMax) {
       alertsMax.value = String(config.alerts_max ?? 3);
@@ -4258,6 +4409,7 @@ class VigoBusCardEditor extends HTMLElement {
     showDebug?.addEventListener("change", (ev) => this._emitConfig({ show_debug: ev.target.checked }));
     showAlerts?.addEventListener("change", (ev) => this._emitConfig({ show_alerts: ev.target.checked }));
     alertsOnlyMainLine?.addEventListener("change", (ev) => this._emitConfig({ alerts_only_main_line: ev.target.checked }));
+    alertsPerStop?.addEventListener("change", (ev) => this._emitConfig({ alerts_per_stop: ev.target.checked }));
     alertsMax?.addEventListener("input", (ev) => this._emitConfig({ alerts_max: Number(ev.target.value) || 3 }));
     lineFilter?.addEventListener("input", (ev) => this._emitConfig({ line_filter: ev.target.value }));
     deviceLocationMode?.addEventListener("change", (ev) => this._emitConfig({ device_location_mode: ev.target.checked }));
