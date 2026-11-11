@@ -72,6 +72,19 @@ const TEXTS = {
     close: "Cerrar",
     no_alert_details: "Sin más información disponible.",
     alert_period: "Periodo",
+    alert_until: "hasta",
+    alert_from: "desde",
+    alert_upcoming: "Pr\u00f3ximo",
+    alert_ends_today: "Termina hoy",
+    alert_more: "m\u00e1s",
+    alert_type: "Tipo",
+    kind_strike: "Huelga",
+    kind_closure: "Corte de tr\u00e1fico",
+    kind_detour: "Desv\u00edo",
+    kind_stop_closed: "Parada anulada",
+    kind_works: "Obras",
+    kind_schedule: "Horario",
+    kind_info: "Informaci\u00f3n",
     prev: "Ant.",
     next: "Sig.",
     line_filter: "Filtro de l\u00ednea",
@@ -171,6 +184,19 @@ const TEXTS = {
     close: "Close",
     no_alert_details: "No further details available.",
     alert_period: "Period",
+    alert_until: "until",
+    alert_from: "from",
+    alert_upcoming: "Upcoming",
+    alert_ends_today: "Ends today",
+    alert_more: "more",
+    alert_type: "Type",
+    kind_strike: "Strike",
+    kind_closure: "Road closure",
+    kind_detour: "Detour",
+    kind_stop_closed: "Stop closed",
+    kind_works: "Roadworks",
+    kind_schedule: "Schedule",
+    kind_info: "Information",
     prev: "Prev",
     next: "Next",
     line_filter: "Line filter",
@@ -270,6 +296,19 @@ const TEXTS = {
     close: "Pechar",
     no_alert_details: "Sen máis información dispoñible.",
     alert_period: "Período",
+    alert_until: "ata",
+    alert_from: "desde",
+    alert_upcoming: "Pr\u00f3ximo",
+    alert_ends_today: "Remata hoxe",
+    alert_more: "m\u00e1is",
+    alert_type: "Tipo",
+    kind_strike: "Folga",
+    kind_closure: "Corte de tr\u00e1fico",
+    kind_detour: "Desv\u00edo",
+    kind_stop_closed: "Parada anulada",
+    kind_works: "Obras",
+    kind_schedule: "Horario",
+    kind_info: "Informaci\u00f3n",
     prev: "Ant.",
     next: "Seg.",
     line_filter: "Filtro de li\u00f1a",
@@ -461,6 +500,106 @@ function formatAlertDateRange(alert, locale) {
     return `${start} – ${end}`;
   }
   return start || end || null;
+}
+
+// --- alert presentation ------------------------------------------------------
+// The feed labels every alert "Informaci\u00f3n general", so the integration
+// (>= 2.20) derives a coarse `kind` from the title. Older integrations don't
+// send it, so the card falls back to the same keyword matching.
+const ALERT_KIND_ICONS = {
+  strike: "\uD83D\uDCE2",
+  closure: "\uD83D\uDEA7",
+  detour: "\u21AA\uFE0F",
+  stop_closed: "\u274C",
+  works: "\uD83D\uDEE0\uFE0F",
+  schedule: "\uD83D\uDD52",
+  info: "\u2139\uFE0F",
+};
+
+const ALERT_KIND_PATTERNS = [
+  ["strike", ["huelga", "folga", "strike", "servicios minimos", "servizos minimos", "minimum service"]],
+  ["stop_closed", ["anulad", "suprimid", "trasladad", "stop closed", "stop cancelled"]],
+  ["closure", ["corte", "cierre", "pechado", "peche", "closure", "road closed"]],
+  ["detour", ["desvio", "desvia", "detour"]],
+  ["works", ["obras", "traballos", "works"]],
+  ["schedule", ["horario", "frecuencia", "schedule"]],
+];
+
+function foldAlertText(value) {
+  return String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function classifyAlertKind(alert) {
+  const given = String(alert?.kind || "").trim();
+  if (given && Object.prototype.hasOwnProperty.call(ALERT_KIND_ICONS, given)) {
+    return given;
+  }
+
+  for (const haystack of [foldAlertText(alert?.title), foldAlertText(alert?.description)]) {
+    for (const [kind, needles] of ALERT_KIND_PATTERNS) {
+      if (kind === "stop_closed" && !(haystack.includes("parada") || haystack.includes("stop"))) {
+        continue;
+      }
+      if (needles.some((needle) => haystack.includes(needle))) {
+        return kind;
+      }
+    }
+  }
+  return "info";
+}
+
+// A notice can list 40+ lines. Showing them all pushed the title out of the
+// row, so only the first few are shown and the rest is a "+N" (the modal keeps
+// the full list).
+function summarizeAlertLines(value, max = 6) {
+  const parts = String(value || "").split(",").map((part) => part.trim()).filter(Boolean);
+  if (parts.length <= max) {
+    return { text: parts.join(", "), extra: 0 };
+  }
+  return { text: parts.slice(0, max).join(", "), extra: parts.length - max };
+}
+
+function localIsoDate(date) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function alertTiming(alert, locale, today = new Date()) {
+  const todayIso = localIsoDate(today);
+  const start = String(alert?.inicio || "").slice(0, 10);
+  const end = String(alert?.fin || "").slice(0, 10);
+
+  if ((alert?.status === "upcoming" || (start && start > todayIso)) && start) {
+    return `${t(locale, "alert_from")} ${formatAlertDate(start, locale)}`;
+  }
+  if (end) {
+    if (end === todayIso) {
+      return t(locale, "alert_ends_today");
+    }
+    const formatted = formatAlertDate(end, locale);
+    return formatted ? `${t(locale, "alert_until")} ${formatted}` : "";
+  }
+  return "";
+}
+
+function renderAlertItem(alert, key, locale) {
+  const kind = classifyAlertKind(alert);
+  const lines = summarizeAlertLines(alert?.lineas);
+  const meta = [t(locale, `kind_${kind}`), alertTiming(alert, locale)].filter(Boolean).join(" \u00B7 ");
+  const linesText = lines.text
+    ? `${lines.text}${lines.extra ? ` +${lines.extra} ${t(locale, "alert_more")}` : ""}`
+    : "";
+
+  return `
+    <div class="next-item alert-item" data-alert-key="${escapeHtml(key)}" data-alert-kind="${escapeHtml(kind)}" role="button" tabindex="0">
+      <strong class="alert-icon" aria-hidden="true">${ALERT_KIND_ICONS[kind]}</strong>
+      <span class="alert-body">
+        <span class="alert-title">${escapeHtml(alert?.title || "-")}</span>
+        <span class="alert-meta">${escapeHtml(meta)}</span>
+        ${linesText ? `<span class="alert-lines">${escapeHtml(t(locale, "line"))}: ${escapeHtml(linesText)}</span>` : ""}
+      </span>
+    </div>
+  `;
 }
 
 function normalizePlaceSuggestions(serviceResult) {
@@ -1713,13 +1852,7 @@ class VigoBusCard extends HTMLElement {
           ? (filteredAlerts.length
             ? `<div class="next-list secondary-alerts">
                 <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 2px;">${escapeHtml(t(locale, "alerts"))}</div>
-                ${filteredAlerts.map((item) => `
-                  <div class="next-item alert-item" data-alert-key="${escapeHtml(this._registerAlert(item))}" role="button" tabindex="0">
-                    <strong>!</strong>
-                    <span class="alert-title">${escapeHtml(item?.title || "-")}</span>
-                    <span class="alert-lines">${escapeHtml(item?.lineas || "")}</span>
-                  </div>
-                `).join("")}
+                ${filteredAlerts.map((item) => renderAlertItem(item, this._registerAlert(item), locale)).join("")}
               </div>`
             : `<div class="meta" style="margin-top: 2px;">${escapeHtml(t(locale, "no_alerts"))}</div>`)
           : ""}
@@ -1795,13 +1928,7 @@ class VigoBusCard extends HTMLElement {
             ? (deviceAlerts.length
               ? `<div class="next-list secondary-alerts">
                   <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 2px;">${escapeHtml(t(locale, "alerts"))}</div>
-                  ${deviceAlerts.map((item) => `
-                    <div class="next-item alert-item" data-alert-key="${escapeHtml(this._registerAlert(item))}" role="button" tabindex="0">
-                      <strong>!</strong>
-                      <span class="alert-title">${escapeHtml(item?.title || "-")}</span>
-                      <span class="alert-lines">${escapeHtml(item?.lineas || "")}</span>
-                    </div>
-                  `).join("")}
+                  ${deviceAlerts.map((item) => renderAlertItem(item, this._registerAlert(item), locale)).join("")}
                 </div>`
               : `<div class="meta" style="margin-top: 2px;">${escapeHtml(t(locale, "no_alerts"))}</div>`)
             : ""}
@@ -2664,24 +2791,51 @@ class VigoBusCard extends HTMLElement {
           white-space: nowrap;
         }
 
-        .alert-title {
+        .alert-icon {
+          font-size: 15px;
+          line-height: 1.3;
+        }
+
+        .alert-body {
           flex: 1;
           min-width: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .alert-title {
+          font-weight: 600;
+          line-height: 1.3;
+          overflow: hidden;
+          overflow-wrap: anywhere;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          line-clamp: 2;
+          -webkit-box-orient: vertical;
+        }
+
+        .alert-meta,
+        .alert-lines {
+          font-size: 12px;
+          color: var(--vigobus-muted);
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
 
-        .alert-lines {
-          flex-shrink: 0;
-          color: var(--vigobus-muted);
-          white-space: nowrap;
-        }
-
         .alert-item {
+          align-items: flex-start;
           cursor: pointer;
           transition: background 0.15s ease;
         }
+
+        .alert-item[data-alert-kind="strike"] { border-left-color: #8e44ad; }
+        .alert-item[data-alert-kind="closure"] { border-left-color: #f39c12; }
+        .alert-item[data-alert-kind="detour"] { border-left-color: #3498db; }
+        .alert-item[data-alert-kind="stop_closed"] { border-left-color: #e74c3c; }
+        .alert-item[data-alert-kind="works"] { border-left-color: #e67e22; }
+        .alert-item[data-alert-kind="schedule"] { border-left-color: #16a085; }
 
         .alert-item:hover,
         .alert-item:focus-visible {
@@ -3195,13 +3349,7 @@ class VigoBusCard extends HTMLElement {
 
             ${this._config.show_alerts ? `<div class="next-list">
               <div style="color: var(--vigobus-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-top: 4px;">${escapeHtml(t(locale, "alerts"))}</div>
-              ${visibleAlerts.length ? visibleAlerts.map((alert) => `
-                <div class="next-item alert-item" data-alert-key="${escapeHtml(this._registerAlert(alert))}" role="button" tabindex="0">
-                  <strong>!</strong>
-                  <span class="alert-title">${escapeHtml(alert?.title || "-")}</span>
-                  <span class="alert-lines">${escapeHtml(alert?.lineas || "")}</span>
-                </div>
-              `).join("") : `<div style="color: var(--vigobus-muted); font-size: 12px;">${escapeHtml(t(locale, "no_alerts"))}</div>`}
+              ${visibleAlerts.length ? visibleAlerts.map((alert) => renderAlertItem(alert, this._registerAlert(alert), locale)).join("") : `<div style="color: var(--vigobus-muted); font-size: 12px;">${escapeHtml(t(locale, "no_alerts"))}</div>`}
             </div>` : ""}
           </div>
         ` : `
@@ -3237,6 +3385,11 @@ class VigoBusCard extends HTMLElement {
             <div class="alert-modal" role="dialog" aria-modal="true">
               <button type="button" class="alert-modal-close" data-alert-close aria-label="${escapeHtml(t(locale, "close"))}">&times;</button>
               <div class="alert-modal-title">${escapeHtml(this._openAlert.title || "-")}</div>
+              ${(() => {
+                const kind = classifyAlertKind(this._openAlert);
+                const timing = alertTiming(this._openAlert, locale);
+                return `<div class="alert-modal-meta">${escapeHtml(t(locale, "alert_type"))}: <b>${ALERT_KIND_ICONS[kind]} ${escapeHtml(t(locale, `kind_${kind}`))}</b>${timing ? ` \u00B7 ${escapeHtml(timing)}` : ""}</div>`;
+              })()}
               ${this._openAlert.lineas ? `<div class="alert-modal-meta">${escapeHtml(t(locale, "line"))}: <b>${escapeHtml(this._openAlert.lineas)}</b></div>` : ""}
               ${formatAlertDateRange(this._openAlert, locale) ? `<div class="alert-modal-meta">${escapeHtml(t(locale, "alert_period"))}: <b>${escapeHtml(formatAlertDateRange(this._openAlert, locale))}</b></div>` : ""}
               <div class="alert-modal-body">${escapeHtml(this._openAlert.description || t(locale, "no_alert_details"))}</div>
