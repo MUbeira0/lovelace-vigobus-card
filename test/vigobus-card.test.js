@@ -343,6 +343,42 @@ assertTrue(
   "closing the alert removes the modal from the rendered output"
 );
 
+// --- alert presentation: kind + long line lists ------------------------------
+assertEqual(sandbox.classifyAlertKind({ kind: "strike", title: "x" }), "strike", "classifyAlertKind trusts the integration's kind");
+assertEqual(sandbox.classifyAlertKind({ title: "SERVICIOS M\u00cdNIMOS HUELGA GENERAL" }), "strike", "classifyAlertKind falls back to the title (strike)");
+assertEqual(sandbox.classifyAlertKind({ title: "CORTE TR\u00c1FICO POLICARPO SANZ" }), "closure", "classifyAlertKind detects a road closure");
+assertEqual(sandbox.classifyAlertKind({ title: "PARADA DE LA AVD. GARC\u00cdA BARB\u00d3N, 43 - ANULADA" }), "stop_closed", "classifyAlertKind detects a closed stop");
+assertEqual(sandbox.classifyAlertKind({ title: "Algo", description: "Habr\u00e1 un desv\u00edo" }), "detour", "classifyAlertKind falls back to the description");
+assertEqual(sandbox.classifyAlertKind({ title: "Aviso", kind: "inventado" }), "info", "classifyAlertKind ignores an unknown kind");
+
+const manyLines = Array.from({ length: 43 }, (_, i) => `L${i + 1}`).join(",");
+assertEqual(sandbox.summarizeAlertLines(manyLines), { text: "L1, L2, L3, L4, L5, L6", extra: 37 }, "summarizeAlertLines keeps the first 6 lines and counts the rest");
+assertEqual(sandbox.summarizeAlertLines("C1, A"), { text: "C1, A", extra: 0 }, "summarizeAlertLines leaves a short list alone");
+
+const today = new Date(2026, 10, 11);
+assertEqual(sandbox.alertTiming({ inicio: "2026-11-10", fin: "2026-11-11" }, "es", today), "Termina hoy", "alertTiming says when an alert ends today");
+assertEqual(sandbox.alertTiming({ inicio: "2026-11-02", fin: "2026-12-31" }, "es", today), "hasta 31/12/2026", "alertTiming shows the end date");
+assertEqual(sandbox.alertTiming({ inicio: "2026-11-20", fin: "2026-12-31", status: "upcoming" }, "es", today), "desde 20/11/2026", "alertTiming shows the start of an upcoming alert");
+assertEqual(sandbox.alertTiming({}, "es", today), "", "alertTiming is empty without dates");
+
+const longAlertHtml = sandbox.renderAlertItem(
+  { id_publicacion: "4029", title: "SERVICIOS M\u00cdNIMOS HUELGA GENERAL 11 DE NOVIEMBRE", lineas: manyLines, inicio: "2026-11-10", fin: "2026-11-11", kind: "strike" },
+  "alert-0",
+  "es"
+);
+assertTrue(longAlertHtml.includes("SERVICIOS M\u00cdNIMOS HUELGA GENERAL 11 DE NOVIEMBRE"), "an alert with 43 lines still renders its title");
+assertTrue(longAlertHtml.includes("Huelga"), "the alert row shows its kind");
+assertTrue(longAlertHtml.includes("+37 m\u00e1s"), "the alert row summarises the extra lines instead of listing all 43");
+assertTrue(!longAlertHtml.includes("L43"), "the alert row does not dump every line");
+assertTrue(/class="next-item alert-item" data-alert-key="alert-0" data-alert-kind="strike"/.test(longAlertHtml), "the alert row keeps its click hook and exposes the kind");
+
+alertCardInstance._openAlertModal({ title: "CORTE X", lineas: manyLines, inicio: "2026-11-02", fin: "2026-12-31", kind: "closure", description: "d" });
+assertTrue(
+  alertCardInstance.shadowRoot.innerHTML.includes("Corte de tr\u00e1fico") && alertCardInstance.shadowRoot.innerHTML.includes("L43"),
+  "the alert modal shows the kind and the full list of lines"
+);
+alertCardInstance._closeAlertModal();
+
 // --- "my location" (device location) alerts ---------------------------------
 // The stateless nearest_stops service now also returns each candidate's line
 // alerts (previously it only returned buses), so the card should both ask
