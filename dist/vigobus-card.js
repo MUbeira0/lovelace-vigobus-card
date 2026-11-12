@@ -3229,7 +3229,8 @@ class VigoBusCard extends HTMLElement {
         }
 
         .alert-dialog::backdrop {
-          background: rgba(0, 0, 0, 0.5);
+          background: rgba(0, 0, 0, 0.6);
+          backdrop-filter: blur(3px);
         }
 
         .alert-modal {
@@ -3242,9 +3243,13 @@ class VigoBusCard extends HTMLElement {
           box-sizing: border-box;
           padding: 20px;
           border-radius: 16px;
-          background: var(--vigobus-bg);
+          /* Opaque: frosted-glass themes make the card background see-through, and a pop-up
+             over the rest of the page has to be readable. The theme's own card colour is
+             layered over an opaque page colour, so it keeps the tint. */
+          background-color: var(--primary-background-color, #10151d);
+          background-image: linear-gradient(var(--vigobus-bg), var(--vigobus-bg));
           border: 1px solid var(--vigobus-divider);
-          box-shadow: 0 20px 48px rgba(0, 0, 0, 0.35);
+          box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45);
           color: var(--vigobus-text);
         }
 
