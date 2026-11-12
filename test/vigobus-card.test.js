@@ -341,6 +341,7 @@ assertTrue(
   "the alert opens in a native modal <dialog> (top layer), not in a fixed overlay inside the card"
 );
 assertTrue(!alertCardInstance.shadowRoot.innerHTML.includes("alert-modal-backdrop"), "the old fixed overlay is gone");
+assertTrue(/\.alert-modal \{[^}]*background-color: var\(--primary-background-color/.test(alertCardInstance.shadowRoot.innerHTML), "the pop-up has an opaque background so it stays readable on translucent themes");
 alertCardInstance._closeAlertModal();
 assertEqual(alertCardInstance._openAlert, null, "_closeAlertModal clears the open alert");
 assertTrue(
