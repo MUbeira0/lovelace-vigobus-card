@@ -336,6 +336,11 @@ assertTrue(
   "opening an alert renders its title, description and the modal backdrop"
 );
 
+assertTrue(
+  alertCardInstance.shadowRoot.innerHTML.includes('<dialog class="alert-dialog" data-alert-backdrop'),
+  "the alert opens in a native modal <dialog> (top layer), not in a fixed overlay inside the card"
+);
+assertTrue(!alertCardInstance.shadowRoot.innerHTML.includes("alert-modal-backdrop"), "the old fixed overlay is gone");
 alertCardInstance._closeAlertModal();
 assertEqual(alertCardInstance._openAlert, null, "_closeAlertModal clears the open alert");
 assertTrue(

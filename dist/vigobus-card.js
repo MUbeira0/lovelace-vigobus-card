@@ -3212,20 +3212,29 @@ class VigoBusCard extends HTMLElement {
           outline: none;
         }
 
-        .alert-modal-backdrop {
-          position: fixed;
-          inset: 0;
-          z-index: 1000;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 20px;
+        /* A native modal <dialog> goes in the browser's top layer, so it is centred on the
+           screen no matter what the card sits in. The old position: fixed overlay was
+           positioned against the card itself whenever a theme gave the card a
+           backdrop-filter / transform (it opened in the middle of the whole card). */
+        .alert-dialog {
+          width: min(400px, 100vw);
+          max-width: 100vw;
+          max-height: 100vh;
           box-sizing: border-box;
+          padding: 20px;
+          border: none;
+          background: transparent;
+          color: var(--vigobus-text);
+          overflow: visible;
+        }
+
+        .alert-dialog::backdrop {
           background: rgba(0, 0, 0, 0.5);
         }
 
         .alert-modal {
           position: relative;
+          margin: 0 auto;
           width: 100%;
           max-width: 360px;
           max-height: 80vh;
@@ -3752,8 +3761,8 @@ class VigoBusCard extends HTMLElement {
         ` : ""}
 
         ${this._openAlert ? `
-          <div class="alert-modal-backdrop" data-alert-backdrop>
-            <div class="alert-modal" role="dialog" aria-modal="true">
+          <dialog class="alert-dialog" data-alert-backdrop aria-label="${escapeHtml(this._openAlert.title || "-")}">
+            <div class="alert-modal">
               <button type="button" class="alert-modal-close" data-alert-close aria-label="${escapeHtml(t(locale, "close"))}">&times;</button>
               <div class="alert-modal-title">${escapeHtml(this._openAlert.title || "-")}</div>
               ${(() => {
@@ -3766,11 +3775,26 @@ class VigoBusCard extends HTMLElement {
               <div class="alert-modal-body">${escapeHtml(this._openAlert.description || t(locale, "no_alert_details"))}</div>
               <button type="button" class="alert-mute-btn" data-alert-mute>${escapeHtml(t(locale, isAlertMuted(this._openAlert, this._mutedAlerts) ? "alert_unmute" : "alert_mute"))}</button>
             </div>
-          </div>
+          </dialog>
         ` : ""}
 
       </ha-card>
     `;
+
+    this.shadowRoot.querySelectorAll("dialog[data-alert-backdrop]").forEach((dialog) => {
+      if (dialog.open) {
+        return;
+      }
+      try {
+        if (typeof dialog.showModal === "function") {
+          dialog.showModal();
+        } else {
+          dialog.setAttribute("open", "");
+        }
+      } catch (err) {
+        dialog.setAttribute("open", "");
+      }
+    });
 
     this.shadowRoot.querySelectorAll(".candidate-pill[data-candidate-id]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -3810,6 +3834,11 @@ class VigoBusCard extends HTMLElement {
         if (ev.target === backdrop) {
           this._closeAlertModal();
         }
+      });
+      // Esc on a native dialog fires "cancel": close through our own state so the card re-renders.
+      backdrop.addEventListener("cancel", (ev) => {
+        ev.preventDefault();
+        this._closeAlertModal();
       });
     });
 
